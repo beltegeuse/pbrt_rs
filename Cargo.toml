@@ -1,0 +1,13 @@
+[package]
+name = "scene_parsing"
+version = "0.1.0"
+authors = ["Adrien Gruson <adrien.gruson@gmail.com>"]
+
+[dependencies]
+pest = "^1.0.0-beta"
+pest_derive = "^1.0.0-beta"
+clap = "2.31.1"
+env_logger = "0.5.6"
+log = "0.4.0"
+cgmath = "*"
+ply-rs = "0.1.1"
