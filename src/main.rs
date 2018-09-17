@@ -12,7 +12,8 @@ extern crate ply_rs;
 use cgmath::{Vector2, Vector3};
 use clap::{App, Arg};
 use pest::Parser;
-use ply_rs as ply;
+use ply_rs::parser;
+use ply_rs::ply;
 use std::collections::HashMap;
 use std::io::Read;
 use std::str::FromStr;
@@ -23,7 +24,6 @@ const _GRAMMAR: &str = include_str!("pbrt.pest");
 #[derive(Parser)]
 #[grammar = "pbrt.pest"]
 struct PbrtParser;
-
 fn pbrt_parameter<T: FromStr>(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Vec<T>)
 where
     <T as std::str::FromStr>::Err: std::fmt::Debug,
@@ -67,6 +67,70 @@ where
         }
     }
     (name, floats)
+}
+
+struct PlyFace {
+    vertex_index: Vec<i32>,
+}
+impl ply::PropertyAccess for PlyFace {
+    fn new() -> Self {
+        PlyFace {
+            vertex_index: Vec::new(),
+        }
+    }
+    fn set_property(&mut self, key: String, property: ply::Property) {
+        match (key.as_ref(), property) {
+            ("vertex_indices", ply::Property::ListInt(vec)) => self.vertex_index = vec,
+            (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
+        }
+    }
+}
+struct PlyVertex {
+    pos: Vector3<f32>,
+    normal: Vector3<f32>,
+    uv: Vector2<f32>,
+    has_normal: bool,
+    has_uv: bool,
+}
+impl ply::PropertyAccess for PlyVertex {
+    fn new() -> Self {
+        PlyVertex {
+            pos: Vector3::new(0.0, 0.0, 0.0),
+            normal: Vector3::new(0.0, 0.0, 0.0),
+            uv: Vector2::new(0.0, 0.0),
+            has_normal: false,
+            has_uv: false,
+        }
+    }
+
+    fn set_property(&mut self, key: String, property: ply::Property) {
+        match (key.as_ref(), property) {
+            ("x", ply::Property::Float(v)) => self.pos.x = v,
+            ("y", ply::Property::Float(v)) => self.pos.y = v,
+            ("z", ply::Property::Float(v)) => self.pos.z = v,
+            ("nx", ply::Property::Float(v)) => {
+                self.has_normal = true;
+                self.normal.x = v
+            }
+            ("ny", ply::Property::Float(v)) => {
+                self.has_normal = true;
+                self.normal.y = v
+            }
+            ("nz", ply::Property::Float(v)) => {
+                self.has_normal = true;
+                self.normal.z = v
+            }
+            ("u", ply::Property::Float(v)) => {
+                self.has_uv = true;
+                self.uv.x = v
+            }
+            ("v", ply::Property::Float(v)) => {
+                self.has_uv = true;
+                self.uv.y = v
+            }
+            (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
+        }
+    }
 }
 
 /// Intermediate representation
@@ -164,7 +228,7 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
                                 Param::parse_float(&mut parameter_pair.into_inner());
                             param_map.insert(name, value);
                         }
-                        Rule::string_param => {
+                        Rule::string_param | Rule::texture_param => {
                             let (name, value) = Param::parse_name(&mut parameter_pair.into_inner());
                             param_map.insert(name, value);
                         }
@@ -306,16 +370,60 @@ impl Shape {
                     .expect("filename is required")
                     .to_name();
                 let filename = wk.join(filename);
+                info!("Reading ply: {:?}", filename);
                 let mut f = std::fs::File::open(filename).unwrap();
-                // create a parser
-                let p = ply::parser::Parser::<ply::ply::DefaultElement>::new();
-                // use the parser: read the entire file
-                let ply = p.read_ply(&mut f);
-                // make sure it did work
-                assert!(ply.is_ok());
-                let ply = ply.unwrap();
-                info!("Ply header: {:#?}", ply.header);
-                None
+                let mut f = std::io::BufReader::new(f);
+                // create parsers
+                let vertex_parser = parser::Parser::<PlyVertex>::new();
+                let face_parser = parser::Parser::<PlyFace>::new();
+                // read the header
+                let header = vertex_parser.read_header(&mut f).unwrap();
+                // TODO: Safely unwrap
+                let mut vertex_list = Vec::new();
+                let mut face_list = Vec::new();
+                for (_ignore_key, element) in &header.elements {
+                    // we could also just parse them in sequence, but the file format might change
+                    match element.name.as_ref() {
+                        "vertex" => {
+                            vertex_list = vertex_parser
+                                .read_payload_for_element(&mut f, &element, &header)
+                                .unwrap();
+                        }
+                        "face" => {
+                            face_list = face_parser
+                                .read_payload_for_element(&mut f, &element, &header)
+                                .unwrap();
+                        }
+                        _ => panic!("Enexpeced element!"),
+                    }
+                }
+                info!(" - #vertex: {}", vertex_list.len());
+                info!(" - #face: {}", face_list.len());
+                let mut indices = Vec::new();
+                for f in face_list {
+                    indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
+                }
+                let normals = if vertex_list[0].has_normal {
+                    Some(vertex_list.iter().map(|v| v.normal).collect())
+                } else {
+                    None
+                };
+                let uv = if vertex_list[0].has_uv {
+                    Some(vertex_list.iter().map(|v| v.uv).collect())
+                } else {
+                    None
+                };
+                let vertex_list = vertex_list.into_iter().map(|v| v.pos).collect();
+
+                Some((
+                    name,
+                    Box::new(Shape::TriMesh(TriMeshShape {
+                        indices,
+                        points: vertex_list,
+                        normals,
+                        uv,
+                    })),
+                ))
             }
             _ => {
                 warn!("Shape case with {} is not cover", name);
@@ -354,43 +462,13 @@ impl Default for Scene {
     }
 }
 
-fn main() {
-    let matches = App::new("scene_parsing")
-        .version("0.0.1")
-        .author("Adrien Gruson <adrien.gruson@gmail.com>")
-        .about("A Rusty scene 3D parsing for rendering system")
-        .arg(
-            Arg::with_name("scene")
-                .required(true)
-                .takes_value(true)
-                .index(1)
-                .help("3D scene"),
-        ).arg(Arg::with_name("debug").short("d").help("debug output"))
-        .get_matches();
-    let scene_path_str = matches
-        .value_of("scene")
-        .expect("no scene parameter provided");
-    if matches.is_present("debug") {
-        // FIXME: add debug flag?
-        env_logger::Builder::from_default_env()
-            .default_format_timestamp(false)
-            .parse("debug")
-            .init();
-    } else {
-        env_logger::Builder::from_default_env()
-            .default_format_timestamp(false)
-            .parse("info")
-            .init();
-    }
-
-    // Read the file
+fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
     let now = Instant::now();
-    info!("Loading: {}", scene_path_str);
-    let working_dir = std::path::Path::new(scene_path_str.clone())
+    info!("Loading: {}", path);
+    let working_dir = std::path::Path::new(path.clone())
         .parent()
         .unwrap();
-    let file = std::fs::File::open(scene_path_str.clone())
-        .expect(&format!("Impossible to open {}", scene_path_str));
+    let file = std::fs::File::open(path.clone()).expect(&format!("Impossible to open {}", path));
     let mut reader = std::io::BufReader::new(file);
     let mut str_buf: String = String::default();
     let _num_bytes = reader.read_to_string(&mut str_buf);
@@ -399,10 +477,7 @@ fn main() {
     let now = Instant::now();
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
-
-    // The parsing loop
-    let mut scene_info = Scene::default();
-    let mut state = vec![State::default()];
+     let mut state = vec![state];
     for pair in pairs {
         let span = pair.clone().into_span();
         debug!("Rule:    {:?}", pair.as_rule());
@@ -433,6 +508,12 @@ fn main() {
                                     scene_info.shapes.push((name_bsdf, shape));
                                 }
                             }
+                            Rule::include => {
+                                let (name, _) = parse_parameters(rule_pair);
+                                let filename = working_dir.join(name);
+                                read_pbrt_file(filename.to_str().unwrap(), scene_info, state.last().unwrap().clone());
+                                unimplemented!();
+                            }
                             _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
                         }
                     }
@@ -442,9 +523,61 @@ fn main() {
         }
     }
     info!("Time for parsing file: {:?}", Instant::now() - now);
+}
+
+fn main() {
+    let matches = App::new("scene_parsing")
+        .version("0.0.1")
+        .author("Adrien Gruson <adrien.gruson@gmail.com>")
+        .about("A Rusty scene 3D parsing for rendering system")
+        .arg(
+            Arg::with_name("scene")
+                .required(true)
+                .takes_value(true)
+                .index(1)
+                .help("3D scene"),
+        ).arg(Arg::with_name("debug").short("d").help("debug output"))
+        .get_matches();
+    let scene_path_str = matches
+        .value_of("scene")
+        .expect("no scene parameter provided");
+    if matches.is_present("debug") {
+        // FIXME: add debug flag?
+        env_logger::Builder::from_default_env()
+            .default_format_timestamp(false)
+            .parse("debug")
+            .init();
+    } else {
+        env_logger::Builder::from_default_env()
+            .default_format_timestamp(false)
+            .parse("info")
+            .init();
+    }
+
+    // The parsing
+    let mut scene_info = Scene::default();
+    read_pbrt_file(scene_path_str, &mut scene_info, State::default());
+    
 
     // Print statistics
     info!("Scenes info: ");
     info!(" - BSDFS: {}", scene_info.materials.len());
     info!(" - Shapes: {}", scene_info.shapes.len());
+    let tri_sum: usize = scene_info
+        .shapes
+        .iter()
+        .map(|v| match v.1.as_ref() {
+            Shape::TriMesh(ref v) => v.points.len(),
+            _ => 0,
+        }).sum();
+    let indices_sum: usize = scene_info
+        .shapes
+        .iter()
+        .map(|v| match v.1.as_ref() {
+            Shape::TriMesh(ref v) => v.indices.len() / 3,
+            _ => 0,
+        }).sum();
+    info!("Total: ");
+    info!(" - #triangles: {}", tri_sum);
+    info!(" - #indices: {}", indices_sum);
 }

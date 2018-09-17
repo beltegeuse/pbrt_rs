@@ -22,6 +22,7 @@ named_statement = { accelerator |
                     make_named_medium |
                     material |
                     named_material |
+                    include | 
                     pixel_filter |
                     sampler |
                     shape |
@@ -153,6 +154,8 @@ make_named_material = { "MakeNamedMaterial" ~ string ~ parameter* }
 make_named_medium = { "MakeNamedMedium" ~ string ~ parameter* }
 // NamedMaterial "myplastic"
 named_material = { "NamedMaterial" ~ string ~ parameter* }
+// Include "other.pbrt"
+include = {"Include" ~ string }
 // Shape "sphere" "float radius" 0.25
 shape = { "Shape" ~ string ~ parameter* }
 // keywords
@@ -161,7 +164,6 @@ keyword = {
      attribute_end |
      "CoordinateSystem" |
      "Identity" |
-     "Include" |
      object_begin |
      object_end |
      object_instance |
