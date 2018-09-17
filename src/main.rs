@@ -45,14 +45,14 @@ fn main() {
     let tri_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.data.as_ref() {
+        .map(|v| match v.data {
             scene_parsing::Shape::TriMesh(ref v) => v.points.len(),
             _ => 0,
         }).sum();
     let indices_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.data.as_ref() {
+        .map(|v| match v.data {
             scene_parsing::Shape::TriMesh(ref v) => v.indices.len() / 3,
             _ => 0,
         }).sum();

@@ -283,15 +283,15 @@ pub enum Camera {
     Perspective(CameraPerspective),
 }
 impl Camera {
-    fn new(pairs: pest::iterators::Pair<Rule>, mat: Matrix4<f32>) -> Option<Box<Self>> {
+    fn new(pairs: pest::iterators::Pair<Rule>, mat: Matrix4<f32>) -> Option<Self> {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "perspective" => {
                 let fov = param.remove("fov").expect("fov is not given").to_float()[0];
-                Some(Box::new(Camera::Perspective(CameraPerspective {
+                Some(Camera::Perspective(CameraPerspective {
                     fov,
                     world_to_camera: mat,
-                })))
+                }))
             }
             _ => {
                 warn!("Camera case with {} is not cover", name);
@@ -309,19 +309,23 @@ pub enum BSDF {
     Diffuse(DiffuseBSDF),
 }
 impl BSDF {
-    fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Box<Self>)> {
+    fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
         let (name, mut param) = parse_parameters(pairs);
         // TODO: Need to clone to avoid borrower checker
-        let bsdf_type = if unamed { name.clone() } else {param
-            .remove("type")
-            .expect("bsdf type param is required")
-            .to_name()};
+        let bsdf_type = if unamed {
+            name.clone()
+        } else {
+            param
+                .remove("type")
+                .expect("bsdf type param is required")
+                .to_name()
+        };
         match bsdf_type.as_ref() {
             "matte" => {
                 let kd = param
                     .remove("Kd")
                     .expect("Kd parameter need to be provided");
-                Some((name, Box::new(BSDF::Diffuse(DiffuseBSDF { kd }))))
+                Some((name, BSDF::Diffuse(DiffuseBSDF { kd })))
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
@@ -342,10 +346,7 @@ pub enum Shape {
     TriMesh(TriMeshShape),
 }
 impl Shape {
-    fn new(
-        pairs: pest::iterators::Pair<Rule>,
-        wk: &std::path::Path,
-    ) -> Option<(String, Box<Self>)> {
+    fn new(pairs: pest::iterators::Pair<Rule>, wk: &std::path::Path) -> Option<(String, Self)> {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "trianglemesh" => {
@@ -374,12 +375,12 @@ impl Shape {
                 };
                 Some((
                     name,
-                    Box::new(Shape::TriMesh(TriMeshShape {
+                    Shape::TriMesh(TriMeshShape {
                         indices,
                         points,
                         normals,
                         uv,
-                    })),
+                    }),
                 ))
             }
             "plymesh" => {
@@ -435,12 +436,12 @@ impl Shape {
 
                 Some((
                     name,
-                    Box::new(Shape::TriMesh(TriMeshShape {
+                    Shape::TriMesh(TriMeshShape {
                         indices,
                         points: vertex_list,
                         normals,
                         uv,
-                    })),
+                    }),
                 ))
             }
             _ => {
@@ -470,12 +471,12 @@ impl Default for State {
 
 /// Scene representation
 pub struct ShapeInfo {
-    pub data: Box<Shape>,
+    pub data: Shape,
     pub material_name: Option<String>,
     pub emission: Option<Param>,
 }
 impl ShapeInfo {
-    fn new(shape: Box<Shape>) -> Self {
+    fn new(shape: Shape) -> Self {
         Self {
             data: shape,
             material_name: None,
@@ -484,8 +485,8 @@ impl ShapeInfo {
     }
 }
 pub struct Scene {
-    pub cameras: Vec<Box<Camera>>,
-    pub materials: HashMap<String, Box<BSDF>>,
+    pub cameras: Vec<Camera>,
+    pub materials: HashMap<String, BSDF>,
     pub shapes: Vec<ShapeInfo>,
     pub number_unamed_materials: usize,
 }
@@ -499,7 +500,6 @@ impl Default for Scene {
         }
     }
 }
-
 
 pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
     let now = Instant::now();
@@ -555,7 +555,10 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             }
                             Rule::material => {
                                 if let Some((_, mat)) = BSDF::new(rule_pair, true) {
-                                    let name = format!("unamed_material_{}", scene_info.number_unamed_materials);
+                                    let name = format!(
+                                        "unamed_material_{}",
+                                        scene_info.number_unamed_materials
+                                    );
                                     scene_info.number_unamed_materials += 1;
                                     scene_info.materials.insert(name.to_string(), mat);
                                 }
@@ -564,17 +567,21 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
                                     state.last().unwrap().named_material.clone();
                                     let mut shape = ShapeInfo::new(shape);
-                                    shape.material_name = state.last().unwrap().named_material.clone();
+                                    shape.material_name =
+                                        state.last().unwrap().named_material.clone();
                                     shape.emission = state.last().unwrap().emission.clone();
                                     scene_info.shapes.push(shape);
                                 }
                             }
                             Rule::area_light_source => {
                                 let (typename, mut light) = parse_parameters(rule_pair);
-                                if typename != "diffuse" {
-                                    panic!("Only support of diffuse light source");
+                                match typename.as_ref() {
+                                    "diffuse" => {
+                                        state.last_mut().unwrap().emission =
+                                            Some(light.remove("L").unwrap());
+                                    }
+                                    _ => warn!("Unsuppored area light: {}", typename),
                                 }
-                                state.last_mut().unwrap().emission = Some(light.remove("L").unwrap());
                             }
                             Rule::include => {
                                 let (name, _) = parse_parameters(rule_pair);
@@ -602,7 +609,7 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             }
                             Rule::world_begin => {
                                 // Reinit the transformation matrix
-                                 state.last_mut().unwrap().matrix = Matrix4::identity();
+                                state.last_mut().unwrap().matrix = Matrix4::identity();
                             }
                             _ => warn!("Ignoring keyword: {:?}", rule_pair.as_rule()),
                         }
