@@ -9,7 +9,7 @@ extern crate cgmath;
 extern crate ply_rs;
 
 // parser
-use cgmath::{Vector2, Vector3};
+use cgmath::*;
 use clap::{App, Arg};
 use pest::Parser;
 use ply_rs::parser;
@@ -24,6 +24,19 @@ const _GRAMMAR: &str = include_str!("pbrt.pest");
 #[derive(Parser)]
 #[grammar = "pbrt.pest"]
 struct PbrtParser;
+fn pbrt_matrix(pairs: pest::iterators::Pairs<Rule>) -> Vec<f32> {
+    let mut m: Vec<f32> = Vec::new();
+    for rule_pair in pairs {
+        // ignore brackets
+        let not_opening: bool = rule_pair.as_str() != String::from("[");
+        let not_closing: bool = rule_pair.as_str() != String::from("]");
+        if not_opening && not_closing {
+            let number = f32::from_str(rule_pair.clone().into_span().as_str()).unwrap();
+            m.push(number);
+        }
+    }
+    m
+}
 fn pbrt_parameter<T: FromStr>(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Vec<T>)
 where
     <T as std::str::FromStr>::Err: std::fmt::Debug,
@@ -135,7 +148,7 @@ impl ply::PropertyAccess for PlyVertex {
 
 /// Intermediate representation
 /// for parsing the parameters
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Param {
     Integer(Vec<i32>),
     Float(Vec<f32>),
@@ -150,9 +163,9 @@ impl Param {
             _ => panic!("impossible to convert to float: {:?}", self),
         }
     }
-    fn parse_float(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Box<Self>) {
+    fn parse_float(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter(pairs);
-        (name, Box::new(Param::Float(values)))
+        (name, Param::Float(values))
     }
 
     fn to_name(self) -> String {
@@ -161,11 +174,11 @@ impl Param {
             _ => panic!("impossible to convert to name: {:?}", self),
         }
     }
-    fn parse_name(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Box<Self>) {
+    fn parse_name(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<String>(pairs);
         let values = values[0].clone(); // TODO
         let values = values.trim_matches('\"').to_string();
-        (name, Box::new(Param::Name(values)))
+        (name, Param::Name(values))
     }
 
     fn to_rgb(self) -> (f32, f32, f32) {
@@ -174,9 +187,9 @@ impl Param {
             _ => panic!("impossible to convert to rgb: {:?}", self),
         }
     }
-    fn parse_rgb(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Box<Self>) {
+    fn parse_rgb(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<f32>(pairs);
-        (name, Box::new(Param::RGB(values[0], values[1], values[2])))
+        (name, Param::RGB(values[0], values[1], values[2]))
     }
 
     fn to_integer(self) -> Vec<i32> {
@@ -185,9 +198,9 @@ impl Param {
             _ => panic!("impossible to convert to integer: {:?}", self),
         }
     }
-    fn parse_integer(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Box<Self>) {
+    fn parse_integer(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<i32>(pairs);
-        (name, Box::new(Param::Integer(values)))
+        (name, Param::Integer(values))
     }
 
     fn to_vector3(self) -> Vec<Vector3<f32>> {
@@ -196,7 +209,7 @@ impl Param {
             _ => panic!("impossible to convert to integer: {:?}", self),
         }
     }
-    fn parse_vector3(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Box<Self>) {
+    fn parse_vector3(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<f32>(pairs);
         if values.len() % 3 != 0 {
             panic!("Non 3 multiples for vector 3");
@@ -205,13 +218,13 @@ impl Param {
             .chunks(3)
             .map(|v| Vector3::new(v[0], v[1], v[2]))
             .collect();
-        (name, Box::new(Param::Vector3(values)))
+        (name, Param::Vector3(values))
     }
 }
 
-fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Box<Param>>) {
+fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Param>) {
     let mut name = None;
-    let mut param_map: HashMap<String, Box<Param>> = HashMap::default();
+    let mut param_map: HashMap<String, Param> = HashMap::default();
     for pair in pairs.into_inner() {
         match pair.as_rule() {
             Rule::empty_string => {}
@@ -263,17 +276,21 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
 /// Camera representations
 struct CameraPerspective {
     pub fov: f32,
+    pub world_to_camera: Matrix4<f32>,
 }
 enum Camera {
     Perspective(CameraPerspective),
 }
 impl Camera {
-    fn new(pairs: pest::iterators::Pair<Rule>) -> Option<Box<Self>> {
+    fn new(pairs: pest::iterators::Pair<Rule>, mat: Matrix4<f32>) -> Option<Box<Self>> {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "perspective" => {
                 let fov = param.remove("fov").expect("fov is not given").to_float()[0];
-                Some(Box::new(Camera::Perspective(CameraPerspective { fov })))
+                Some(Box::new(Camera::Perspective(CameraPerspective {
+                    fov,
+                    world_to_camera: mat,
+                })))
             }
             _ => {
                 warn!("Camera case with {} is not cover", name);
@@ -285,19 +302,19 @@ impl Camera {
 
 /// BSDF representation
 struct DiffuseBSDF {
-    pub kd: Box<Param>,
+    pub kd: Param,
 }
 enum BSDF {
     Diffuse(DiffuseBSDF),
 }
 impl BSDF {
-    fn new(pairs: pest::iterators::Pair<Rule>) -> Option<(String, Box<Self>)> {
+    fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Box<Self>)> {
         let (name, mut param) = parse_parameters(pairs);
         // TODO: Need to clone to avoid borrower checker
-        let bsdf_type = param
+        let bsdf_type = if unamed { name.clone() } else {param
             .remove("type")
             .expect("bsdf type param is required")
-            .to_name();
+            .to_name()};
         match bsdf_type.as_ref() {
             "matte" => {
                 let kd = param
@@ -437,20 +454,39 @@ impl Shape {
 #[derive(Clone, Debug)]
 struct State {
     pub named_material: Option<String>,
+    pub matrix: Matrix4<f32>,
+    pub emission: Option<Param>,
 }
 impl Default for State {
     fn default() -> Self {
         State {
             named_material: None,
+            matrix: Matrix4::identity(),
+            emission: None,
         }
     }
 }
 
 /// Scene representation
+struct ShapeInfo {
+    pub data: Box<Shape>,
+    pub material_name: Option<String>,
+    pub emission: Option<Param>,
+}
+impl ShapeInfo {
+    fn new(shape: Box<Shape>) -> Self {
+        Self {
+            data: shape,
+            material_name: None,
+            emission: None,
+        }
+    }
+}
 struct Scene {
     pub cameras: Vec<Box<Camera>>,
     pub materials: HashMap<String, Box<BSDF>>,
-    pub shapes: Vec<(Option<String>, Box<Shape>)>,
+    pub shapes: Vec<ShapeInfo>,
+    pub number_unamed_materials: usize,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -458,6 +494,7 @@ impl Default for Scene {
             cameras: Vec::default(),
             materials: HashMap::default(),
             shapes: Vec::default(),
+            number_unamed_materials: 0,
         }
     }
 }
@@ -465,9 +502,7 @@ impl Default for Scene {
 fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
     let now = Instant::now();
     info!("Loading: {}", path);
-    let working_dir = std::path::Path::new(path.clone())
-        .parent()
-        .unwrap();
+    let working_dir = std::path::Path::new(path.clone()).parent().unwrap();
     let file = std::fs::File::open(path.clone()).expect(&format!("Impossible to open {}", path));
     let mut reader = std::io::BufReader::new(file);
     let mut str_buf: String = String::default();
@@ -477,7 +512,7 @@ fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
     let now = Instant::now();
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
-     let mut state = vec![state];
+    let mut state = vec![state];
     for pair in pairs {
         let span = pair.clone().into_span();
         debug!("Rule:    {:?}", pair.as_rule());
@@ -485,16 +520,30 @@ fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
         debug!("Text:    {}", span.as_str());
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
+                Rule::transform => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 16 {
+                        panic!("Transform need to have 16 floats: {:?}", values);
+                    }
+                    let matrix = state.last().unwrap().matrix * Matrix4::new(
+                        values[0], values[1], values[2], values[3], values[4], values[5],
+                        values[6], values[7], values[8], values[9], values[10], values[11],
+                        values[12], values[13], values[14], values[15],
+                    );
+                    state.last_mut().unwrap().matrix = matrix;
+                }
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
                         match rule_pair.as_rule() {
                             Rule::camera => {
-                                if let Some(c) = Camera::new(rule_pair) {
+                                if let Some(c) =
+                                    Camera::new(rule_pair, state.last().unwrap().matrix)
+                                {
                                     scene_info.cameras.push(c);
                                 }
                             }
                             Rule::make_named_material => {
-                                if let Some((name, mat)) = BSDF::new(rule_pair) {
+                                if let Some((name, mat)) = BSDF::new(rule_pair, false) {
                                     scene_info.materials.insert(name, mat);
                                 }
                             }
@@ -502,19 +551,58 @@ fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                 let (name, _) = parse_parameters(rule_pair);
                                 state.last_mut().unwrap().named_material = Some(name);
                             }
+                            Rule::material => {
+                                if let Some((_, mat)) = BSDF::new(rule_pair, true) {
+                                    let name = format!("unamed_material_{}", scene_info.number_unamed_materials);
+                                    scene_info.number_unamed_materials += 1;
+                                    scene_info.materials.insert(name.to_string(), mat);
+                                }
+                            }
                             Rule::shape => {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
-                                    let name_bsdf = state.last().unwrap().named_material.clone();
-                                    scene_info.shapes.push((name_bsdf, shape));
+                                    state.last().unwrap().named_material.clone();
+                                    let mut shape = ShapeInfo::new(shape);
+                                    shape.material_name = state.last().unwrap().named_material.clone();
+                                    shape.emission = state.last().unwrap().emission.clone();
+                                    scene_info.shapes.push(shape);
                                 }
+                            }
+                            Rule::area_light_source => {
+                                let (typename, mut light) = parse_parameters(rule_pair);
+                                if typename != "diffuse" {
+                                    panic!("Only support of diffuse light source");
+                                }
+                                state.last_mut().unwrap().emission = Some(light.remove("L").unwrap());
                             }
                             Rule::include => {
                                 let (name, _) = parse_parameters(rule_pair);
                                 let filename = working_dir.join(name);
-                                read_pbrt_file(filename.to_str().unwrap(), scene_info, state.last().unwrap().clone());
+                                read_pbrt_file(
+                                    filename.to_str().unwrap(),
+                                    scene_info,
+                                    state.last().unwrap().clone(),
+                                );
                                 unimplemented!();
                             }
                             _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
+                        }
+                    }
+                }
+                Rule::keyword => {
+                    for rule_pair in inner_pair.into_inner() {
+                        match rule_pair.as_rule() {
+                            Rule::attribute_begin | Rule::transform_begin => {
+                                let new_state = state.last().unwrap().clone();
+                                state.push(new_state);
+                            }
+                            Rule::attribute_end | Rule::transform_end => {
+                                state.pop();
+                            }
+                            Rule::world_begin => {
+                                // Reinit the transformation matrix
+                                 state.last_mut().unwrap().matrix = Matrix4::identity();
+                            }
+                            _ => warn!("Ignoring keyword: {:?}", rule_pair.as_rule()),
                         }
                     }
                 }
@@ -557,7 +645,6 @@ fn main() {
     // The parsing
     let mut scene_info = Scene::default();
     read_pbrt_file(scene_path_str, &mut scene_info, State::default());
-    
 
     // Print statistics
     info!("Scenes info: ");
@@ -566,14 +653,14 @@ fn main() {
     let tri_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.1.as_ref() {
+        .map(|v| match v.data.as_ref() {
             Shape::TriMesh(ref v) => v.points.len(),
             _ => 0,
         }).sum();
     let indices_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.1.as_ref() {
+        .map(|v| match v.data.as_ref() {
             Shape::TriMesh(ref v) => v.indices.len() / 3,
             _ => 0,
         }).sum();
