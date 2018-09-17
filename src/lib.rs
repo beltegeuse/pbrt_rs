@@ -389,7 +389,7 @@ impl Shape {
                     .expect("filename is required")
                     .to_name();
                 let filename = wk.join(filename);
-                info!("Reading ply: {:?}", filename);
+                //info!("Reading ply: {:?}", filename);
                 let mut f = std::fs::File::open(filename).unwrap();
                 let mut f = std::io::BufReader::new(f);
                 // create parsers
@@ -416,8 +416,8 @@ impl Shape {
                         _ => panic!("Enexpeced element!"),
                     }
                 }
-                info!(" - #vertex: {}", vertex_list.len());
-                info!(" - #face: {}", face_list.len());
+                //info!(" - #vertex: {}", vertex_list.len());
+                //info!(" - #face: {}", face_list.len());
                 let mut indices = Vec::new();
                 for f in face_list {
                     indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
@@ -489,6 +489,7 @@ pub struct Scene {
     pub materials: HashMap<String, BSDF>,
     pub shapes: Vec<ShapeInfo>,
     pub number_unamed_materials: usize,
+    pub image_size: Vector2<u32>,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -497,6 +498,7 @@ impl Default for Scene {
             materials: HashMap::default(),
             shapes: Vec::default(),
             number_unamed_materials: 0,
+            image_size: Vector2::new(512, 512),
         }
     }
 }
@@ -532,6 +534,27 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                         values[6], values[7], values[8], values[9], values[10], values[11],
                         values[12], values[13], values[14], values[15],
                     );
+                    state.last_mut().unwrap().matrix = matrix;
+                }
+                Rule::scale => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 3 {
+                        panic!("Scale need to have 3 floats: {:?}", values);
+                    }
+                    let matrix = state.last().unwrap().matrix * Matrix4::from_diagonal(
+                        Vector4::new(values[0], values[1], values[2], 1.0),
+                    );
+                    state.last_mut().unwrap().matrix = matrix;
+                }
+                Rule::look_at => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 9 {
+                        panic!("LookAt need to have 9 floats: {:?}", values);
+                    }
+                    let eye = Point3::new(values[0], values[1], values[2]);
+                    let target = Point3::new(values[3], values[4], values[5]);
+                    let up = Vector3::new(values[6], values[7], values[8]);
+                    let matrix = state.last().unwrap().matrix * Matrix4::look_at(eye, target, up);
                     state.last_mut().unwrap().matrix = matrix;
                 }
                 Rule::named_statement => {
@@ -572,6 +595,13 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                     shape.emission = state.last().unwrap().emission.clone();
                                     scene_info.shapes.push(shape);
                                 }
+                            }
+                            Rule::film => {
+                                let (_name, mut param) = parse_parameters(rule_pair);
+                                scene_info.image_size = Vector2::new(
+                                    param.remove("xresolution").unwrap().to_integer()[0] as u32,
+                                    param.remove("yresolution").unwrap().to_integer()[0] as u32,
+                                );
                             }
                             Rule::area_light_source => {
                                 let (typename, mut light) = parse_parameters(rule_pair);
