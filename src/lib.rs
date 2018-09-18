@@ -473,13 +473,15 @@ impl Default for State {
 pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
+    pub matrix: Matrix4<f32>,
     pub emission: Option<Param>,
 }
 impl ShapeInfo {
-    fn new(shape: Shape) -> Self {
+    fn new(shape: Shape, matrix: Matrix4<f32>) -> Self {
         Self {
             data: shape,
             material_name: None,
+            matrix,
             emission: None,
         }
     }
@@ -525,11 +527,12 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::transform => {
+                    // FIMXE: Does the rule replace the transformation?
                     let values = pbrt_matrix(inner_pair.into_inner());
                     if values.len() != 16 {
                         panic!("Transform need to have 16 floats: {:?}", values);
                     }
-                    let matrix = state.last().unwrap().matrix * Matrix4::new(
+                    let matrix = Matrix4::new(
                         values[0], values[1], values[2], values[3], values[4], values[5],
                         values[6], values[7], values[8], values[9], values[10], values[11],
                         values[12], values[13], values[14], values[15],
@@ -588,11 +591,10 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             }
                             Rule::shape => {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
-                                    state.last().unwrap().named_material.clone();
-                                    let mut shape = ShapeInfo::new(shape);
-                                    shape.material_name =
-                                        state.last().unwrap().named_material.clone();
-                                    shape.emission = state.last().unwrap().emission.clone();
+                                    let state = state.last().unwrap();
+                                    let mut shape = ShapeInfo::new(shape, state.matrix.clone());
+                                    shape.material_name = state.named_material.clone();
+                                    shape.emission = state.emission.clone();
                                     scene_info.shapes.push(shape);
                                 }
                             }
