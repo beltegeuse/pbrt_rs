@@ -238,7 +238,7 @@ impl Param {
 }
 
 fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Param>) {
-    let mut name = None;
+    let mut name = vec![];
     let mut param_map: HashMap<String, Param> = HashMap::default();
     for pair in pairs.into_inner() {
         match pair.as_rule() {
@@ -246,7 +246,7 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
             Rule::string => {
                 let mut string_pairs = pair.into_inner();
                 let ident = string_pairs.next();
-                name = Some(String::from_str(ident.unwrap().clone().into_span().as_str()).unwrap());
+                name.push(String::from_str(ident.unwrap().clone().into_span().as_str()).unwrap());
             }
             Rule::parameter => {
                 for parameter_pair in pair.into_inner() {
@@ -285,11 +285,23 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
             _ => warn!("Ignoring: {}", pair.as_str()),
         }
     }
-    if let Some(name) = name {
-        (name, param_map)
+    if !name.is_empty() {
+        (name[0].clone(), param_map)
     } else {
         panic!("Parse parameter, name is not provided");
     }
+}
+
+// Helper to remove the map elements
+// if the elemet is not found, the default value is used
+macro_rules! remove_default {
+    ($map: expr, $name:expr, $default:expr) => {{
+        if let Some(v) = $map.remove($name) {
+            v
+        } else {
+            $default
+        }
+    }};
 }
 
 /// Camera representations
@@ -319,16 +331,29 @@ impl Camera {
     }
 }
 
-// Helper to remove the map elements
-// if the elemet is not found, the default value is used
-macro_rules! remove_default {
-    ($map: expr, $name:expr, $default:expr) => {{
-        if let Some(v) = $map.remove($name) {
-            v
+//// Texture representation
+pub struct Texture {
+    pub filename: String,
+    pub trilinear: bool,
+}
+impl Texture {
+    fn new(pairs: pest::iterators::Pair<Rule>, wk: &std::path::Path) -> Option<(String, Self)> {
+        let (name, mut param) = parse_parameters(pairs);
+
+        if let Some(filename) = param.remove("filename") {
+            let trilinear = remove_default!(param, "trilinear", Param::Bool(true)).to_bool();
+            Some((
+                name,
+                Texture {
+                    filename: wk.join(filename.to_name()).to_str().unwrap().to_string(),
+                    trilinear,
+                },
+            ))
         } else {
-            $default
+            warn!("Unsupported texture: {}", name);
+            None
         }
-    }};
+    }
 }
 
 /// BSDF representation
@@ -634,6 +659,7 @@ pub struct Scene {
     pub shapes: Vec<ShapeInfo>,
     pub number_unamed_materials: usize,
     pub image_size: Vector2<u32>,
+    pub textures: HashMap<String, Texture>,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -643,6 +669,7 @@ impl Default for Scene {
             shapes: Vec::default(),
             number_unamed_materials: 0,
             image_size: Vector2::new(512, 512),
+            textures: HashMap::default(),
         }
     }
 }
@@ -715,6 +742,11 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                     scene_info.cameras.push(c);
                                 }
                             }
+                            Rule::texture => {
+                                if let Some((name, mat)) = Texture::new(rule_pair, working_dir) {
+                                    scene_info.textures.insert(name, mat);
+                                }
+                            }
                             Rule::make_named_material => {
                                 if let Some((name, mat)) = BSDF::new(rule_pair, false) {
                                     scene_info.materials.insert(name, mat);
@@ -754,8 +786,7 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                 let (typename, mut light) = parse_parameters(rule_pair);
                                 match typename.as_ref() {
                                     "diffuse" => {
-                                        state.last_mut().unwrap().emission =
-                                            Some(light.remove("L").unwrap());
+                                        state.last_mut().unwrap().emission = light.remove("L"); // TODO: If other name, not exported
                                     }
                                     _ => warn!("Unsuppored area light: {}", typename),
                                 }
