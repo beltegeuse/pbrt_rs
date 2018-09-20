@@ -42,7 +42,7 @@ fn pbrt_parameter<T: FromStr>(pairs: &mut pest::iterators::Pairs<Rule>) -> (Stri
 where
     <T as std::str::FromStr>::Err: std::fmt::Debug,
 {
-    let mut floats: Vec<T> = Vec::new();
+    let mut values: Vec<T> = Vec::new();
     // single float or several floats using brackets
     let ident = pairs.next();
     let name = String::from(ident.unwrap().clone().into_span().as_str());
@@ -57,12 +57,13 @@ where
                 // closing bracket found
                 break;
             } else {
-                let float = pair
-                    .into_span()
-                    .as_str()
+                let value = pair.into_span().as_str();
+                // TODO: Only necessary for some of the names... might impact the performance of the parser
+                let value = value.trim_matches('\"').to_string();
+                let value = value
                     .parse::<T>()
-                    .expect("parsing error on parameter");
-                floats.push(float);
+                    .expect(&format!("parsing error on parameter: {}", value));
+                values.push(value);
             }
             number = pairs.next();
         }
@@ -71,16 +72,16 @@ where
         let mut number = option.clone();
         while number.is_some() {
             let pair = number.unwrap().clone();
-            let float = pair
+            let value = pair
                 .into_span()
                 .as_str()
                 .parse::<T>()
                 .expect("parsing error on parameter");
-            floats.push(float);
+            values.push(value);
             number = pairs.next();
         }
     }
-    (name, floats)
+    (name, values)
 }
 
 struct PlyFace {
@@ -156,6 +157,7 @@ pub enum Param {
     Vector3(Vec<Vector3<f32>>),
     Name(String),
     RGB(f32, f32, f32),
+    Bool(bool),
 }
 impl Param {
     fn to_float(self) -> Vec<f32> {
@@ -221,10 +223,22 @@ impl Param {
             .collect();
         (name, Param::Vector3(values))
     }
+
+    fn to_bool(self) -> bool {
+        match self {
+            Param::Bool(v) => v,
+            _ => panic!("impossible to convert to bool: {:?}", self),
+        }
+    }
+    fn parse_bool(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
+        let (name, values) = pbrt_parameter::<bool>(pairs);
+        let values = values[0];
+        (name, Param::Bool(values))
+    }
 }
 
 fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Param>) {
-    let mut name = None;
+    let mut name = vec![];
     let mut param_map: HashMap<String, Param> = HashMap::default();
     for pair in pairs.into_inner() {
         match pair.as_rule() {
@@ -232,7 +246,7 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
             Rule::string => {
                 let mut string_pairs = pair.into_inner();
                 let ident = string_pairs.next();
-                name = Some(String::from_str(ident.unwrap().clone().into_span().as_str()).unwrap());
+                name.push(String::from_str(ident.unwrap().clone().into_span().as_str()).unwrap());
             }
             Rule::parameter => {
                 for parameter_pair in pair.into_inner() {
@@ -240,6 +254,10 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
                         Rule::float_param => {
                             let (name, value) =
                                 Param::parse_float(&mut parameter_pair.into_inner());
+                            param_map.insert(name, value);
+                        }
+                        Rule::bool_param => {
+                            let (name, value) = Param::parse_bool(&mut parameter_pair.into_inner());
                             param_map.insert(name, value);
                         }
                         Rule::string_param | Rule::texture_param => {
@@ -267,11 +285,23 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
             _ => warn!("Ignoring: {}", pair.as_str()),
         }
     }
-    if let Some(name) = name {
-        (name, param_map)
+    if !name.is_empty() {
+        (name[0].clone(), param_map)
     } else {
         panic!("Parse parameter, name is not provided");
     }
+}
+
+// Helper to remove the map elements
+// if the elemet is not found, the default value is used
+macro_rules! remove_default {
+    ($map: expr, $name:expr, $default:expr) => {{
+        if let Some(v) = $map.remove($name) {
+            v
+        } else {
+            $default
+        }
+    }};
 }
 
 /// Camera representations
@@ -301,12 +331,68 @@ impl Camera {
     }
 }
 
+//// Texture representation
+pub struct Texture {
+    pub filename: String,
+    pub trilinear: bool,
+}
+impl Texture {
+    fn new(pairs: pest::iterators::Pair<Rule>, wk: &std::path::Path) -> Option<(String, Self)> {
+        let (name, mut param) = parse_parameters(pairs);
+
+        if let Some(filename) = param.remove("filename") {
+            let trilinear = remove_default!(param, "trilinear", Param::Bool(true)).to_bool();
+            Some((
+                name,
+                Texture {
+                    filename: wk.join(filename.to_name()).to_str().unwrap().to_string(),
+                    trilinear,
+                },
+            ))
+        } else {
+            warn!("Unsupported texture: {}", name);
+            None
+        }
+    }
+}
+
 /// BSDF representation
-pub struct DiffuseBSDF {
+pub struct MatteBSDF {
     pub kd: Param,
+    pub sigma: Param,
+    pub bumpmap: Option<Param>,
+}
+pub struct MetalBSDF {
+    pub eta: Param,
+    pub k: Param,
+    pub roughness: Param,
+    pub u_roughness: Option<Param>,
+    pub v_roughness: Option<Param>,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
+}
+pub struct SubstrateBSDF {
+    pub kd: Param,
+    pub ks: Param,
+    pub u_roughness: Param,
+    pub v_roughness: Param,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
+}
+pub struct GlassBSDF {
+    pub kr: Param,
+    pub kt: Param,
+    pub u_roughness: Param,
+    pub v_roughness: Param,
+    pub index: Param,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
 }
 pub enum BSDF {
-    Diffuse(DiffuseBSDF),
+    Matte(MatteBSDF),
+    Metal(MetalBSDF),
+    Substrate(SubstrateBSDF),
+    Glass(GlassBSDF),
 }
 impl BSDF {
     fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
@@ -322,10 +408,91 @@ impl BSDF {
         };
         match bsdf_type.as_ref() {
             "matte" => {
-                let kd = param
-                    .remove("Kd")
-                    .expect("Kd parameter need to be provided");
-                Some((name, BSDF::Diffuse(DiffuseBSDF { kd })))
+                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
+                let sigma = remove_default!(param, "sigma", Param::Float(vec![0.0]));
+                let bumpmap = param.remove("bumpmap");
+                if !param.is_empty() {
+                    panic!("Miss parameters for Matte: {} => {:?}", name, param);
+                }
+                Some((name, BSDF::Matte(MatteBSDF { kd, sigma, bumpmap })))
+            }
+            "metal" => {
+                // TODO: Need to plug the copper material parameter
+                let eta = remove_default!(param, "eta", Param::RGB(1.0, 1.0, 1.0));
+                let k = remove_default!(param, "k", Param::RGB(0.5, 0.5, 0.5));
+                let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
+                let u_roughness = param.remove("uroughness");
+                let v_roughness = param.remove("vroughness");
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                if !param.is_empty() {
+                    warn!("Miss parameters for Metal: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Metal(MetalBSDF {
+                        eta,
+                        k,
+                        roughness,
+                        u_roughness,
+                        v_roughness,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
+            }
+            "substrate" => {
+                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
+                let ks = remove_default!(param, "Ks", Param::RGB(0.5, 0.5, 0.5));
+                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
+                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                if !param.is_empty() {
+                    warn!("Miss parameters for Substrate: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Substrate(SubstrateBSDF {
+                        kd,
+                        ks,
+                        u_roughness,
+                        v_roughness,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
+            }
+            "glass" => {
+                let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
+                let kt = remove_default!(param, "Kt", Param::RGB(1.0, 1.0, 1.0));
+                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
+                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                let index = if let Some(eta) = param.remove("eta") {
+                    eta
+                } else {
+                    remove_default!(param, "index", Param::Float(vec![1.5]))
+                };
+                if !param.is_empty() {
+                    warn!("Miss parameters for Glass: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Glass(GlassBSDF {
+                        kr,
+                        kt,
+                        u_roughness,
+                        v_roughness,
+                        index,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
@@ -473,13 +640,15 @@ impl Default for State {
 pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
+    pub matrix: Matrix4<f32>,
     pub emission: Option<Param>,
 }
 impl ShapeInfo {
-    fn new(shape: Shape) -> Self {
+    fn new(shape: Shape, matrix: Matrix4<f32>) -> Self {
         Self {
             data: shape,
             material_name: None,
+            matrix,
             emission: None,
         }
     }
@@ -490,6 +659,7 @@ pub struct Scene {
     pub shapes: Vec<ShapeInfo>,
     pub number_unamed_materials: usize,
     pub image_size: Vector2<u32>,
+    pub textures: HashMap<String, Texture>,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -499,6 +669,7 @@ impl Default for Scene {
             shapes: Vec::default(),
             number_unamed_materials: 0,
             image_size: Vector2::new(512, 512),
+            textures: HashMap::default(),
         }
     }
 }
@@ -525,11 +696,12 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::transform => {
+                    // FIMXE: Does the rule replace the transformation?
                     let values = pbrt_matrix(inner_pair.into_inner());
                     if values.len() != 16 {
                         panic!("Transform need to have 16 floats: {:?}", values);
                     }
-                    let matrix = state.last().unwrap().matrix * Matrix4::new(
+                    let matrix = Matrix4::new(
                         values[0], values[1], values[2], values[3], values[4], values[5],
                         values[6], values[7], values[8], values[9], values[10], values[11],
                         values[12], values[13], values[14], values[15],
@@ -560,11 +732,19 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
                         match rule_pair.as_rule() {
+                            Rule::integrator | Rule::sampler | Rule::pixel_filter => {
+                                // Ignore these parameters
+                            }
                             Rule::camera => {
                                 if let Some(c) =
                                     Camera::new(rule_pair, state.last().unwrap().matrix)
                                 {
                                     scene_info.cameras.push(c);
+                                }
+                            }
+                            Rule::texture => {
+                                if let Some((name, mat)) = Texture::new(rule_pair, working_dir) {
+                                    scene_info.textures.insert(name, mat);
                                 }
                             }
                             Rule::make_named_material => {
@@ -588,11 +768,10 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             }
                             Rule::shape => {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
-                                    state.last().unwrap().named_material.clone();
-                                    let mut shape = ShapeInfo::new(shape);
-                                    shape.material_name =
-                                        state.last().unwrap().named_material.clone();
-                                    shape.emission = state.last().unwrap().emission.clone();
+                                    let state = state.last().unwrap();
+                                    let mut shape = ShapeInfo::new(shape, state.matrix.clone());
+                                    shape.material_name = state.named_material.clone();
+                                    shape.emission = state.emission.clone();
                                     scene_info.shapes.push(shape);
                                 }
                             }
@@ -607,8 +786,7 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                 let (typename, mut light) = parse_parameters(rule_pair);
                                 match typename.as_ref() {
                                     "diffuse" => {
-                                        state.last_mut().unwrap().emission =
-                                            Some(light.remove("L").unwrap());
+                                        state.last_mut().unwrap().emission = light.remove("L"); // TODO: If other name, not exported
                                     }
                                     _ => warn!("Unsuppored area light: {}", typename),
                                 }
