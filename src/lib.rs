@@ -42,7 +42,7 @@ fn pbrt_parameter<T: FromStr>(pairs: &mut pest::iterators::Pairs<Rule>) -> (Stri
 where
     <T as std::str::FromStr>::Err: std::fmt::Debug,
 {
-    let mut floats: Vec<T> = Vec::new();
+    let mut values: Vec<T> = Vec::new();
     // single float or several floats using brackets
     let ident = pairs.next();
     let name = String::from(ident.unwrap().clone().into_span().as_str());
@@ -57,12 +57,13 @@ where
                 // closing bracket found
                 break;
             } else {
-                let float = pair
-                    .into_span()
-                    .as_str()
+                let value = pair.into_span().as_str();
+                // TODO: Only necessary for some of the names... might impact the performance of the parser
+                let value = value.trim_matches('\"').to_string();
+                let value = value
                     .parse::<T>()
-                    .expect("parsing error on parameter");
-                floats.push(float);
+                    .expect(&format!("parsing error on parameter: {}", value));
+                values.push(value);
             }
             number = pairs.next();
         }
@@ -71,16 +72,16 @@ where
         let mut number = option.clone();
         while number.is_some() {
             let pair = number.unwrap().clone();
-            let float = pair
+            let value = pair
                 .into_span()
                 .as_str()
                 .parse::<T>()
                 .expect("parsing error on parameter");
-            floats.push(float);
+            values.push(value);
             number = pairs.next();
         }
     }
-    (name, floats)
+    (name, values)
 }
 
 struct PlyFace {
@@ -156,6 +157,7 @@ pub enum Param {
     Vector3(Vec<Vector3<f32>>),
     Name(String),
     RGB(f32, f32, f32),
+    Bool(bool),
 }
 impl Param {
     fn to_float(self) -> Vec<f32> {
@@ -221,6 +223,18 @@ impl Param {
             .collect();
         (name, Param::Vector3(values))
     }
+
+    fn to_bool(self) -> bool {
+        match self {
+            Param::Bool(v) => v,
+            _ => panic!("impossible to convert to bool: {:?}", self),
+        }
+    }
+    fn parse_bool(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
+        let (name, values) = pbrt_parameter::<bool>(pairs);
+        let values = values[0];
+        (name, Param::Bool(values))
+    }
 }
 
 fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Param>) {
@@ -240,6 +254,10 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
                         Rule::float_param => {
                             let (name, value) =
                                 Param::parse_float(&mut parameter_pair.into_inner());
+                            param_map.insert(name, value);
+                        }
+                        Rule::bool_param => {
+                            let (name, value) = Param::parse_bool(&mut parameter_pair.into_inner());
                             param_map.insert(name, value);
                         }
                         Rule::string_param | Rule::texture_param => {
@@ -301,12 +319,55 @@ impl Camera {
     }
 }
 
+// Helper to remove the map elements
+// if the elemet is not found, the default value is used
+macro_rules! remove_default {
+    ($map: expr, $name:expr, $default:expr) => {{
+        if let Some(v) = $map.remove($name) {
+            v
+        } else {
+            $default
+        }
+    }};
+}
+
 /// BSDF representation
-pub struct DiffuseBSDF {
+pub struct MatteBSDF {
     pub kd: Param,
+    pub sigma: Param,
+    pub bumpmap: Option<Param>,
+}
+pub struct MetalBSDF {
+    pub eta: Param,
+    pub k: Param,
+    pub roughness: Param,
+    pub u_roughness: Option<Param>,
+    pub v_roughness: Option<Param>,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
+}
+pub struct SubstrateBSDF {
+    pub kd: Param,
+    pub ks: Param,
+    pub u_roughness: Param,
+    pub v_roughness: Param,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
+}
+pub struct GlassBSDF {
+    pub kr: Param,
+    pub kt: Param,
+    pub u_roughness: Param,
+    pub v_roughness: Param,
+    pub index: Param,
+    pub bumpmap: Option<Param>,
+    pub remap_roughness: bool,
 }
 pub enum BSDF {
-    Diffuse(DiffuseBSDF),
+    Matte(MatteBSDF),
+    Metal(MetalBSDF),
+    Substrate(SubstrateBSDF),
+    Glass(GlassBSDF),
 }
 impl BSDF {
     fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
@@ -322,10 +383,91 @@ impl BSDF {
         };
         match bsdf_type.as_ref() {
             "matte" => {
-                let kd = param
-                    .remove("Kd")
-                    .expect("Kd parameter need to be provided");
-                Some((name, BSDF::Diffuse(DiffuseBSDF { kd })))
+                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
+                let sigma = remove_default!(param, "sigma", Param::Float(vec![0.0]));
+                let bumpmap = param.remove("bumpmap");
+                if !param.is_empty() {
+                    panic!("Miss parameters for Matte: {} => {:?}", name, param);
+                }
+                Some((name, BSDF::Matte(MatteBSDF { kd, sigma, bumpmap })))
+            }
+            "metal" => {
+                // TODO: Need to plug the copper material parameter
+                let eta = remove_default!(param, "eta", Param::RGB(1.0, 1.0, 1.0));
+                let k = remove_default!(param, "k", Param::RGB(0.5, 0.5, 0.5));
+                let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
+                let u_roughness = param.remove("uroughness");
+                let v_roughness = param.remove("vroughness");
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                if !param.is_empty() {
+                    warn!("Miss parameters for Metal: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Metal(MetalBSDF {
+                        eta,
+                        k,
+                        roughness,
+                        u_roughness,
+                        v_roughness,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
+            }
+            "substrate" => {
+                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
+                let ks = remove_default!(param, "Ks", Param::RGB(0.5, 0.5, 0.5));
+                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
+                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                if !param.is_empty() {
+                    warn!("Miss parameters for Substrate: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Substrate(SubstrateBSDF {
+                        kd,
+                        ks,
+                        u_roughness,
+                        v_roughness,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
+            }
+            "glass" => {
+                let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
+                let kt = remove_default!(param, "Kt", Param::RGB(1.0, 1.0, 1.0));
+                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
+                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
+                let bumpmap = param.remove("bumpmap");
+                let remap_roughness =
+                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                let index = if let Some(eta) = param.remove("eta") {
+                    eta
+                } else {
+                    remove_default!(param, "index", Param::Float(vec![1.5]))
+                };
+                if !param.is_empty() {
+                    warn!("Miss parameters for Glass: {} => {:?}", name, param);
+                }
+                Some((
+                    name,
+                    BSDF::Glass(GlassBSDF {
+                        kr,
+                        kt,
+                        u_roughness,
+                        v_roughness,
+                        index,
+                        bumpmap,
+                        remap_roughness,
+                    }),
+                ))
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
@@ -563,6 +705,9 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
                         match rule_pair.as_rule() {
+                            Rule::integrator | Rule::sampler | Rule::pixel_filter => {
+                                // Ignore these parameters
+                            }
                             Rule::camera => {
                                 if let Some(c) =
                                     Camera::new(rule_pair, state.last().unwrap().matrix)
