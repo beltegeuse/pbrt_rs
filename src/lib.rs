@@ -417,9 +417,9 @@ impl BSDF {
                 Some((name, BSDF::Matte(MatteBSDF { kd, sigma, bumpmap })))
             }
             "metal" => {
-                // TODO: Need to plug the copper material parameter
-                let eta = remove_default!(param, "eta", Param::RGB(1.0, 1.0, 1.0));
-                let k = remove_default!(param, "k", Param::RGB(0.5, 0.5, 0.5));
+                // TODO: Need to be able to export other material params
+                let eta = remove_default!(param, "eta", Param::RGB(0.19999069, 0.9220846, 1.0998759));
+                let k = remove_default!(param, "k", Param::RGB(3.9046354, 2.4476333, 2.1376526));
                 let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
                 let u_roughness = param.remove("uroughness");
                 let v_roughness = param.remove("vroughness");
