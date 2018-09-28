@@ -388,11 +388,16 @@ pub struct GlassBSDF {
     pub bumpmap: Option<Param>,
     pub remap_roughness: bool,
 }
+pub struct MirrorBSDF {
+    pub kr: Param,
+    pub bumpmap: Option<Param>,
+}
 pub enum BSDF {
     Matte(MatteBSDF),
     Metal(MetalBSDF),
     Substrate(SubstrateBSDF),
     Glass(GlassBSDF),
+    Mirror(MirrorBSDF),
 }
 impl BSDF {
     fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
@@ -493,6 +498,14 @@ impl BSDF {
                         remap_roughness,
                     }),
                 ))
+            },
+            "mirror" => {
+                let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
+                let bumpmap = param.remove("bumpmap");
+                Some((name, BSDF::Mirror(MirrorBSDF {
+                    kr,
+                    bumpmap,
+                })))
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
