@@ -17,6 +17,7 @@ use ply_rs::parser;
 use ply_rs::ply;
 use std::collections::HashMap;
 use std::io::Read;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -423,7 +424,8 @@ impl BSDF {
             }
             "metal" => {
                 // TODO: Need to be able to export other material params
-                let eta = remove_default!(param, "eta", Param::RGB(0.19999069, 0.9220846, 1.0998759));
+                let eta =
+                    remove_default!(param, "eta", Param::RGB(0.19999069, 0.9220846, 1.0998759));
                 let k = remove_default!(param, "k", Param::RGB(3.9046354, 2.4476333, 2.1376526));
                 let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
                 let u_roughness = param.remove("uroughness");
@@ -498,14 +500,11 @@ impl BSDF {
                         remap_roughness,
                     }),
                 ))
-            },
+            }
             "mirror" => {
                 let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
                 let bumpmap = param.remove("bumpmap");
-                Some((name, BSDF::Mirror(MirrorBSDF {
-                    kr,
-                    bumpmap,
-                })))
+                Some((name, BSDF::Mirror(MirrorBSDF { kr, bumpmap })))
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
@@ -516,12 +515,14 @@ impl BSDF {
 }
 
 /// Mesh representation
+#[derive(Debug)]
 pub struct TriMeshShape {
     pub indices: Vec<u32>,
     pub points: Vec<Vector3<f32>>,
     pub normals: Option<Vec<Vector3<f32>>>,
     pub uv: Option<Vec<Vector2<f32>>>,
 }
+#[derive(Debug)]
 pub enum Shape {
     TriMesh(TriMeshShape),
 }
@@ -569,8 +570,12 @@ impl Shape {
                     .expect("filename is required")
                     .to_name();
                 let filename = wk.join(filename);
-                //info!("Reading ply: {:?}", filename);
-                let mut f = std::fs::File::open(filename).unwrap();
+                let mut f = match std::fs::File::open(filename.clone()) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        panic!("Error in opening: {:?} [wk: {:?}] => {:?}", filename, wk, e);
+                    }
+                };
                 let mut f = std::io::BufReader::new(f);
                 // create parsers
                 let vertex_parser = parser::Parser::<PlyVertex>::new();
@@ -638,6 +643,7 @@ pub struct State {
     pub named_material: Option<String>,
     pub matrix: Matrix4<f32>,
     pub emission: Option<Param>,
+    pub object: Option<ObjectInfo>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -645,11 +651,13 @@ impl Default for State {
             named_material: None,
             matrix: Matrix4::identity(),
             emission: None,
+            object: None,
         }
     }
 }
 
 /// Scene representation
+#[derive(Debug)]
 pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
@@ -666,31 +674,55 @@ impl ShapeInfo {
         }
     }
 }
+pub struct InstanceInfo {
+    pub matrix: Matrix4<f32>,
+    pub object: Rc<ObjectInfo>,
+}
+#[derive(Clone, Debug)]
+pub struct ObjectInfo {
+    pub name: String,
+    pub shapes: Vec<Rc<ShapeInfo>>,
+    pub matrix: Matrix4<f32>,
+}
+
 pub struct Scene {
+    // General scene info
     pub cameras: Vec<Camera>,
-    pub materials: HashMap<String, BSDF>,
-    pub shapes: Vec<ShapeInfo>,
-    pub number_unamed_materials: usize,
     pub image_size: Vector2<u32>,
+    // Materials
+    pub number_unamed_materials: usize,
+    pub materials: HashMap<String, BSDF>,
     pub textures: HashMap<String, Texture>,
+    // 3D objects
+    pub shapes: Vec<Rc<ShapeInfo>>,               //< unamed shapes
+    pub objects: HashMap<String, Rc<ObjectInfo>>, //< shapes with objects
+    pub instances: Vec<InstanceInfo>,             //< instances on the shapes
 }
 impl Default for Scene {
     fn default() -> Self {
         Scene {
             cameras: Vec::default(),
-            materials: HashMap::default(),
-            shapes: Vec::default(),
-            number_unamed_materials: 0,
             image_size: Vector2::new(512, 512),
+            // materials
+            number_unamed_materials: 0,
+            materials: HashMap::default(),
             textures: HashMap::default(),
+            // 3d object information
+            shapes: Vec::default(),
+            objects: HashMap::default(),
+            instances: Vec::default(),
         }
     }
 }
 
-pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
+pub fn read_pbrt_file(
+    path: &str,
+    working_dir: &std::path::Path,
+    scene_info: &mut Scene,
+    state: State,
+) {
     let now = Instant::now();
     info!("Loading: {}", path);
-    let working_dir = std::path::Path::new(path.clone()).parent().unwrap();
     let file = std::fs::File::open(path.clone()).expect(&format!("Impossible to open {}", path));
     let mut reader = std::io::BufReader::new(file);
     let mut str_buf: String = String::default();
@@ -781,11 +813,14 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             }
                             Rule::shape => {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
-                                    let state = state.last().unwrap();
+                                    let state = state.last_mut().unwrap();
                                     let mut shape = ShapeInfo::new(shape, state.matrix.clone());
                                     shape.material_name = state.named_material.clone();
                                     shape.emission = state.emission.clone();
-                                    scene_info.shapes.push(shape);
+                                    match state.object {
+                                        Some(ref mut o) => o.shapes.push(Rc::new(shape)),
+                                        None => scene_info.shapes.push(Rc::new(shape)),
+                                    };
                                 }
                             }
                             Rule::film => {
@@ -809,10 +844,10 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                                 let filename = working_dir.join(name);
                                 read_pbrt_file(
                                     filename.to_str().unwrap(),
+                                    working_dir,
                                     scene_info,
                                     state.last().unwrap().clone(),
                                 );
-                                unimplemented!();
                             }
                             _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
                         }
@@ -824,6 +859,49 @@ pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: State) {
                             Rule::attribute_begin | Rule::transform_begin => {
                                 let new_state = state.last().unwrap().clone();
                                 state.push(new_state);
+                            }
+                            Rule::object_begin => {
+                                // In san miguel, attribute begin and object begin are wrong...
+                                // info!("state add: {:?}", state);
+                                let (name, _) = parse_parameters(rule_pair);
+                                // info!("name: {}", name);
+                                let curr_state = state.last_mut().unwrap();
+                                if curr_state.object.is_some() {
+                                    panic!("Impossible to do an object begin inside an object");
+                                }
+                                curr_state.object = Some(ObjectInfo {
+                                    name,
+                                    shapes: Vec::new(),
+                                    matrix: curr_state.matrix.clone(),
+                                });
+                            }
+                            Rule::object_end => {
+                                // info!("state: {:?}", state);
+                                let curr_state = state.last_mut().unwrap();
+                                if curr_state.object.is_none() {
+                                    panic!("Impossible to have object end before object begin");
+                                }
+                                {
+                                    let object = curr_state.object.as_ref().unwrap();
+                                    scene_info
+                                        .objects
+                                        .insert(object.name.clone(), Rc::new(object.clone()));
+                                }
+                                curr_state.object = None;
+                            }
+                            Rule::object_instance => {
+                                let (name, _) = parse_parameters(rule_pair);
+                                let curr_state = state.last_mut().unwrap();
+                                let object = match scene_info.objects.get(&name) {
+                                    Some(ref o) => Rc::clone(o),
+                                    None => {
+                                        panic!("Impossible to found the object named: {}", name)
+                                    }
+                                };
+                                scene_info.instances.push(InstanceInfo {
+                                    matrix: curr_state.matrix.clone(),
+                                    object,
+                                })
                             }
                             Rule::attribute_end | Rule::transform_end => {
                                 state.pop();

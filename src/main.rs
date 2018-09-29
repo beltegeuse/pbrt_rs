@@ -36,7 +36,15 @@ fn main() {
 
     // The parsing
     let mut scene_info = pbrt_rs::Scene::default();
-    pbrt_rs::read_pbrt_file(scene_path_str, &mut scene_info, pbrt_rs::State::default());
+    let working_dir = std::path::Path::new(scene_path_str.clone())
+        .parent()
+        .unwrap();
+    pbrt_rs::read_pbrt_file(
+        scene_path_str,
+        &working_dir,
+        &mut scene_info,
+        pbrt_rs::State::default(),
+    );
 
     // Print statistics
     info!("Scenes info: ");

@@ -1,5 +1,5 @@
 // Originally from rs_pbrt
-pbrt = _{ whitespace? ~ (statement | comment)* ~ last_statement }
+pbrt = _{ whitespace? ~ (statement | comment)* ~ last_statement* }
 statement = { active_transform |
               concat_transform |
               keyword |
