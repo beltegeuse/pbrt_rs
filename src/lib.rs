@@ -156,6 +156,7 @@ pub enum Param {
     Integer(Vec<i32>),
     Float(Vec<f32>),
     Vector3(Vec<Vector3<f32>>),
+    Vector2(Vec<Vector2<f32>>),
     Name(String),
     RGB(f32, f32, f32),
     Bool(bool),
@@ -225,6 +226,21 @@ impl Param {
         (name, Param::Vector3(values))
     }
 
+    fn to_vector2(self) -> Vec<Vector2<f32>> {
+        match self {
+            Param::Vector2(v) => v,
+            _ => panic!("impossible to convert to integer: {:?}", self),
+        }
+    }
+    fn parse_vector2(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
+        let (name, values) = pbrt_parameter::<f32>(pairs);
+        if values.len() % 2 != 0 {
+            panic!("Non 2 multiples for point 2");
+        }
+        let values = values.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
+        (name, Param::Vector2(values))
+    }
+
     fn to_bool(self) -> bool {
         match self {
             Param::Bool(v) => v,
@@ -277,6 +293,11 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
                         Rule::point_param | Rule::normal_param => {
                             let (name, value) =
                                 Param::parse_vector3(&mut parameter_pair.into_inner());
+                            param_map.insert(name, value);
+                        }
+                        Rule::point2_param => {
+                            let (name, value) =
+                                Param::parse_vector2(&mut parameter_pair.into_inner());
                             param_map.insert(name, value);
                         }
                         _ => warn!("Ignoring Parameter: {}", parameter_pair.as_str()),
@@ -598,7 +619,7 @@ impl Shape {
                                 .read_payload_for_element(&mut f, &element, &header)
                                 .unwrap();
                         }
-                        _ => panic!("Enexpeced element!"),
+                        _ => panic!("Unexpeced element!"),
                     }
                 }
                 //info!(" - #vertex: {}", vertex_list.len());
@@ -751,6 +772,11 @@ pub fn read_pbrt_file(
                         values[6], values[7], values[8], values[9], values[10], values[11],
                         values[12], values[13], values[14], values[15],
                     );
+                    // let matrix = Matrix4::new(
+                    //     values[0], values[4], values[8], values[12], values[1], values[5],
+                    //     values[9], values[13], values[2], values[6], values[10], values[14],
+                    //     values[3], values[7], values[11], values[15],
+                    // );
                     state.last_mut().unwrap().matrix = matrix;
                 }
                 Rule::scale => {
@@ -761,6 +787,7 @@ pub fn read_pbrt_file(
                     let matrix = state.last().unwrap().matrix * Matrix4::from_diagonal(
                         Vector4::new(values[0], values[1], values[2], 1.0),
                     );
+                    // info!("{:?}", matrix);
                     state.last_mut().unwrap().matrix = matrix;
                 }
                 Rule::look_at => {
@@ -772,6 +799,7 @@ pub fn read_pbrt_file(
                     let target = Point3::new(values[3], values[4], values[5]);
                     let up = Vector3::new(values[6], values[7], values[8]);
                     let matrix = state.last().unwrap().matrix * Matrix4::look_at(eye, target, up);
+                    // info!("{:?}", matrix);
                     state.last_mut().unwrap().matrix = matrix;
                 }
                 Rule::named_statement => {
@@ -841,6 +869,7 @@ pub fn read_pbrt_file(
                             }
                             Rule::include => {
                                 let (name, _) = parse_parameters(rule_pair);
+                                info!("Include found: {}", name);
                                 let filename = working_dir.join(name);
                                 read_pbrt_file(
                                     filename.to_str().unwrap(),

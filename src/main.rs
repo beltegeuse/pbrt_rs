@@ -49,7 +49,11 @@ fn main() {
     // Print statistics
     info!("Scenes info: ");
     info!(" - BSDFS: {}", scene_info.materials.len());
-    info!(" - Shapes: {}", scene_info.shapes.len());
+    info!(" - Objects: ");
+    info!("    * Unamed object: {}", scene_info.shapes.len());
+    info!("    * Object: {}", scene_info.objects.len());
+    info!("    * Object's instance: {}", scene_info.instances.len());
+
     let tri_sum: usize = scene_info
         .shapes
         .iter()

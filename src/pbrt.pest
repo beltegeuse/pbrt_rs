@@ -190,7 +190,7 @@ ident =  { ('a'..'z' | 'A'..'Z' | "_" | '0'..'9') ~
            ('a'..'z' | 'A'..'Z' | " " | "_" | "-" | ":" | '0'..'9' | "é")* }
 string = { ("\"" ~ ident ~ "\"") | ("\"" ~ filename ~ "\"") }
 empty_string = { "\"" ~ "\"" }
-filename = { ("/")? ~ // optional (can be a full path)
+filename = { (".")* ~ ("/")? ~ // optional (can be a full path)
              ('a'..'z' | 'A'..'Z' | "_") ~
              ('a'..'z' | 'A'..'Z' | "_" | "-" | "." | "/" | '0'..'9')* }
 // "" { return LBRACK; }
