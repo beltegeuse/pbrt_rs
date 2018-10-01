@@ -661,19 +661,71 @@ impl Shape {
 /// State of the parser
 #[derive(Clone, Debug)]
 pub struct State {
-    pub named_material: Option<String>,
-    pub matrix: Matrix4<f32>,
-    pub emission: Option<Param>,
-    pub object: Option<ObjectInfo>,
+    named_material: Vec<Option<String>>,
+    matrix: Vec<Matrix4<f32>>,
+    emission: Vec<Option<Param>>,
+    object: Option<ObjectInfo>,
 }
 impl Default for State {
     fn default() -> Self {
         State {
-            named_material: None,
-            matrix: Matrix4::identity(),
-            emission: None,
+            named_material: vec![None],
+            matrix: vec![Matrix4::identity()],
+            emission: vec![None],
             object: None,
         }
+    }
+}
+impl State {
+    // State
+    fn save(&mut self) {
+        let new_material = self.named_material.last().unwrap().clone();
+        self.named_material.push(new_material);
+        let new_matrix = self.matrix.last().unwrap().clone();
+        self.matrix.push(new_matrix);
+        let new_emission = self.emission.last().unwrap().clone();
+        self.emission.push(new_emission);
+    }
+    fn restore(&mut self) {
+        self.named_material.pop();
+        self.matrix.pop();
+        self.emission.pop();
+    }
+
+    // Matrix
+    fn matrix(&self) -> Matrix4<f32> {
+        self.matrix.last().unwrap().clone()
+    }
+    fn replace_matrix(&mut self, m: Matrix4<f32>) {
+        let mut curr_mat = self.matrix.last_mut().unwrap();
+        curr_mat.clone_from(&m);
+    }
+    // Named material
+    fn named_material(&self) -> Option<String> {
+        self.named_material.last().unwrap().clone()
+    }
+    fn set_named_matrial(&mut self, s: String) {
+        let last_id = self.named_material.len() - 1;
+        self.named_material[last_id] = Some(s);
+    }
+    // Emission
+    fn emission(&self) -> Option<Param> {
+        self.emission.last().unwrap().clone()
+    }
+    fn set_emission(&mut self, e: Param) {
+        let last_id = self.emission.len() - 1;
+        self.emission[last_id] = Some(e);
+    }
+    // Object
+    fn new_object(&mut self, name: String) {
+        self.object = Some(ObjectInfo {
+            name,
+            shapes: Vec::new(),
+            matrix: self.matrix(),
+        });
+    }
+    fn finish_object(&mut self) -> ObjectInfo {
+        std::mem::replace(&mut self.object, None).unwrap()
     }
 }
 
@@ -740,7 +792,7 @@ pub fn read_pbrt_file(
     path: &str,
     working_dir: &std::path::Path,
     scene_info: &mut Scene,
-    state: State,
+    state: &mut State,
 ) {
     let now = Instant::now();
     info!("Loading: {}", path);
@@ -753,7 +805,6 @@ pub fn read_pbrt_file(
     let now = Instant::now();
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
-    let mut state = vec![state];
     for pair in pairs {
         let span = pair.clone().into_span();
         debug!("Rule:    {:?}", pair.as_rule());
@@ -772,23 +823,29 @@ pub fn read_pbrt_file(
                         values[6], values[7], values[8], values[9], values[10], values[11],
                         values[12], values[13], values[14], values[15],
                     );
-                    // let matrix = Matrix4::new(
-                    //     values[0], values[4], values[8], values[12], values[1], values[5],
-                    //     values[9], values[13], values[2], values[6], values[10], values[14],
-                    //     values[3], values[7], values[11], values[15],
-                    // );
-                    state.last_mut().unwrap().matrix = matrix;
+                    state.replace_matrix(matrix);
+                }
+                Rule::concat_transform => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 16 {
+                        panic!("Transform need to have 16 floats: {:?}", values);
+                    }
+                    let matrix = state.matrix() * Matrix4::new(
+                        values[0], values[1], values[2], values[3], values[4], values[5],
+                        values[6], values[7], values[8], values[9], values[10], values[11],
+                        values[12], values[13], values[14], values[15],
+                    );
+                    state.replace_matrix(matrix);
                 }
                 Rule::scale => {
                     let values = pbrt_matrix(inner_pair.into_inner());
                     if values.len() != 3 {
                         panic!("Scale need to have 3 floats: {:?}", values);
                     }
-                    let matrix = state.last().unwrap().matrix * Matrix4::from_diagonal(
-                        Vector4::new(values[0], values[1], values[2], 1.0),
-                    );
-                    // info!("{:?}", matrix);
-                    state.last_mut().unwrap().matrix = matrix;
+                    let matrix = state.matrix() * Matrix4::from_diagonal(Vector4::new(
+                        values[0], values[1], values[2], 1.0,
+                    ));
+                    state.replace_matrix(matrix);
                 }
                 Rule::look_at => {
                     let values = pbrt_matrix(inner_pair.into_inner());
@@ -798,9 +855,8 @@ pub fn read_pbrt_file(
                     let eye = Point3::new(values[0], values[1], values[2]);
                     let target = Point3::new(values[3], values[4], values[5]);
                     let up = Vector3::new(values[6], values[7], values[8]);
-                    let matrix = state.last().unwrap().matrix * Matrix4::look_at(eye, target, up);
-                    // info!("{:?}", matrix);
-                    state.last_mut().unwrap().matrix = matrix;
+                    let matrix = state.matrix() * Matrix4::look_at(eye, target, up);
+                    state.replace_matrix(matrix);
                 }
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
@@ -809,9 +865,7 @@ pub fn read_pbrt_file(
                                 // Ignore these parameters
                             }
                             Rule::camera => {
-                                if let Some(c) =
-                                    Camera::new(rule_pair, state.last().unwrap().matrix)
-                                {
+                                if let Some(c) = Camera::new(rule_pair, state.matrix()) {
                                     scene_info.cameras.push(c);
                                 }
                             }
@@ -827,7 +881,7 @@ pub fn read_pbrt_file(
                             }
                             Rule::named_material => {
                                 let (name, _) = parse_parameters(rule_pair);
-                                state.last_mut().unwrap().named_material = Some(name);
+                                state.set_named_matrial(name);
                             }
                             Rule::material => {
                                 if let Some((_, mat)) = BSDF::new(rule_pair, true) {
@@ -841,10 +895,9 @@ pub fn read_pbrt_file(
                             }
                             Rule::shape => {
                                 if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
-                                    let state = state.last_mut().unwrap();
-                                    let mut shape = ShapeInfo::new(shape, state.matrix.clone());
-                                    shape.material_name = state.named_material.clone();
-                                    shape.emission = state.emission.clone();
+                                    let mut shape = ShapeInfo::new(shape, state.matrix());
+                                    shape.material_name = state.named_material();
+                                    shape.emission = state.emission();
                                     match state.object {
                                         Some(ref mut o) => o.shapes.push(Rc::new(shape)),
                                         None => scene_info.shapes.push(Rc::new(shape)),
@@ -862,7 +915,10 @@ pub fn read_pbrt_file(
                                 let (typename, mut light) = parse_parameters(rule_pair);
                                 match typename.as_ref() {
                                     "diffuse" => {
-                                        state.last_mut().unwrap().emission = light.remove("L"); // TODO: If other name, not exported
+                                        if let Some(e) = light.remove("L") {
+                                            // TODO: If other name, not exported
+                                            state.set_emission(e);
+                                        }
                                     }
                                     _ => warn!("Unsuppored area light: {}", typename),
                                 }
@@ -875,7 +931,7 @@ pub fn read_pbrt_file(
                                     filename.to_str().unwrap(),
                                     working_dir,
                                     scene_info,
-                                    state.last().unwrap().clone(),
+                                    state,
                                 );
                             }
                             _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
@@ -886,41 +942,21 @@ pub fn read_pbrt_file(
                     for rule_pair in inner_pair.into_inner() {
                         match rule_pair.as_rule() {
                             Rule::attribute_begin | Rule::transform_begin => {
-                                let new_state = state.last().unwrap().clone();
-                                state.push(new_state);
+                                state.save();
                             }
                             Rule::object_begin => {
                                 // In san miguel, attribute begin and object begin are wrong...
-                                // info!("state add: {:?}", state);
                                 let (name, _) = parse_parameters(rule_pair);
-                                // info!("name: {}", name);
-                                let curr_state = state.last_mut().unwrap();
-                                if curr_state.object.is_some() {
-                                    panic!("Impossible to do an object begin inside an object");
-                                }
-                                curr_state.object = Some(ObjectInfo {
-                                    name,
-                                    shapes: Vec::new(),
-                                    matrix: curr_state.matrix.clone(),
-                                });
+                                state.new_object(name);
                             }
                             Rule::object_end => {
-                                // info!("state: {:?}", state);
-                                let curr_state = state.last_mut().unwrap();
-                                if curr_state.object.is_none() {
-                                    panic!("Impossible to have object end before object begin");
-                                }
-                                {
-                                    let object = curr_state.object.as_ref().unwrap();
-                                    scene_info
-                                        .objects
-                                        .insert(object.name.clone(), Rc::new(object.clone()));
-                                }
-                                curr_state.object = None;
+                                let object = state.finish_object();
+                                scene_info
+                                    .objects
+                                    .insert(object.name.clone(), Rc::new(object));
                             }
                             Rule::object_instance => {
                                 let (name, _) = parse_parameters(rule_pair);
-                                let curr_state = state.last_mut().unwrap();
                                 let object = match scene_info.objects.get(&name) {
                                     Some(ref o) => Rc::clone(o),
                                     None => {
@@ -928,16 +964,16 @@ pub fn read_pbrt_file(
                                     }
                                 };
                                 scene_info.instances.push(InstanceInfo {
-                                    matrix: curr_state.matrix.clone(),
+                                    matrix: state.matrix(),
                                     object,
                                 })
                             }
                             Rule::attribute_end | Rule::transform_end => {
-                                state.pop();
+                                state.restore();
                             }
                             Rule::world_begin => {
                                 // Reinit the transformation matrix
-                                state.last_mut().unwrap().matrix = Matrix4::identity();
+                                state.replace_matrix(Matrix4::identity());
                             }
                             _ => warn!("Ignoring keyword: {:?}", rule_pair.as_rule()),
                         }
