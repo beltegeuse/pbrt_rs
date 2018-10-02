@@ -539,7 +539,7 @@ impl BSDF {
 #[derive(Debug)]
 pub struct TriMeshShape {
     pub indices: Vec<u32>,
-    pub points: Vec<Vector3<f32>>,
+    pub points: Vec<Point3<f32>>,
     pub normals: Option<Vec<Vector3<f32>>>,
     pub uv: Option<Vec<Vector2<f32>>>,
 }
@@ -553,6 +553,7 @@ impl Shape {
         match name.as_ref() {
             "trianglemesh" => {
                 let points = param.remove("P").expect("P is required").to_vector3();
+                let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
                 let indices = param
                     .remove("indices")
                     .expect("indice is required")
@@ -622,8 +623,8 @@ impl Shape {
                         _ => panic!("Unexpeced element!"),
                     }
                 }
-                //info!(" - #vertex: {}", vertex_list.len());
-                //info!(" - #face: {}", face_list.len());
+                info!(" - #vertex: {}", vertex_list.len());
+                info!(" - #face: {}", face_list.len());
                 let mut indices = Vec::new();
                 for f in face_list {
                     indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
@@ -638,7 +639,10 @@ impl Shape {
                 } else {
                     None
                 };
-                let vertex_list = vertex_list.into_iter().map(|v| v.pos).collect();
+                let vertex_list = vertex_list
+                    .into_iter()
+                    .map(|v| Point3::from_vec(v.pos))
+                    .collect();
 
                 Some((
                     name,
@@ -811,6 +815,8 @@ pub fn read_pbrt_file(
         debug!("Span:    {:?}", span);
         debug!("Text:    {}", span.as_str());
         for inner_pair in pair.into_inner() {
+            debug!("Inner Rule:    {:?}", inner_pair.as_rule());
+            debug!("Inner Text:    {}", inner_pair.as_str());
             match inner_pair.as_rule() {
                 Rule::transform => {
                     // FIMXE: Does the rule replace the transformation?
@@ -818,10 +824,28 @@ pub fn read_pbrt_file(
                     if values.len() != 16 {
                         panic!("Transform need to have 16 floats: {:?}", values);
                     }
+                    let m00 = values[0];
+                    let m01 = values[1];
+                    let m02 = values[2];
+                    let m03 = values[3];
+                    let m10 = values[4];
+                    let m11 = values[5];
+                    let m12 = values[6];
+                    let m13 = values[7];
+                    let m20 = values[8];
+                    let m21 = values[9];
+                    let m22 = values[10];
+                    let m23 = values[11];
+                    let m30 = values[12];
+                    let m31 = values[13];
+                    let m32 = values[14];
+                    let m33 = values[15];
+                    #[cfg_attr(rustfmt, rustfmt_skip)]
                     let matrix = Matrix4::new(
-                        values[0], values[1], values[2], values[3], values[4], values[5],
-                        values[6], values[7], values[8], values[9], values[10], values[11],
-                        values[12], values[13], values[14], values[15],
+                        m00, m01, m02, m03, 
+                        m10, m11, m12, m13, 
+                        m20, m21, m22, m23, 
+                        m30, m31, m32,m33,
                     );
                     state.replace_matrix(matrix);
                 }
@@ -830,10 +854,29 @@ pub fn read_pbrt_file(
                     if values.len() != 16 {
                         panic!("Transform need to have 16 floats: {:?}", values);
                     }
+                    let m00 = values[0];
+                    let m01 = values[1];
+                    let m02 = values[2];
+                    let m03 = values[3];
+                    let m10 = values[4];
+                    let m11 = values[5];
+                    let m12 = values[6];
+                    let m13 = values[7];
+                    let m20 = values[8];
+                    let m21 = values[9];
+                    let m22 = values[10];
+                    let m23 = values[11];
+                    let m30 = values[12];
+                    let m31 = values[13];
+                    let m32 = values[14];
+                    let m33 = values[15];
+                    
+                    #[cfg_attr(rustfmt, rustfmt_skip)]
                     let matrix = state.matrix() * Matrix4::new(
-                        values[0], values[1], values[2], values[3], values[4], values[5],
-                        values[6], values[7], values[8], values[9], values[10], values[11],
-                        values[12], values[13], values[14], values[15],
+                        m00, m01, m02, m03, 
+                        m10, m11, m12, m13, 
+                        m20, m21, m22, m23, 
+                        m30, m31, m32,m33,
                     );
                     state.replace_matrix(matrix);
                 }
@@ -855,8 +898,21 @@ pub fn read_pbrt_file(
                     let eye = Point3::new(values[0], values[1], values[2]);
                     let target = Point3::new(values[3], values[4], values[5]);
                     let up = Vector3::new(values[6], values[7], values[8]);
-                    let matrix = state.matrix() * Matrix4::look_at(eye, target, up);
+
+                    let dir = (target - eye).normalize();
+                    let left = -dir.cross(up.normalize()).normalize();
+                    let new_up = dir.cross(left);
+
+                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    let matrix = state.matrix() *  Matrix4::new(
+                        left.x.clone(), left.y.clone(), left.z.clone(), 0.0,
+                        new_up.x.clone(), new_up.y.clone(), new_up.z.clone(), 0.0,
+                        dir.x.clone(), dir.y.clone(), dir.z.clone(), 0.0,
+                        eye.x, eye.y, eye.z, 1.0,
+                    ).inverse_transform().unwrap();
+
                     state.replace_matrix(matrix);
+                    info!("After lookat: {:?}", state.matrix());
                 }
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
@@ -898,9 +954,16 @@ pub fn read_pbrt_file(
                                     let mut shape = ShapeInfo::new(shape, state.matrix());
                                     shape.material_name = state.named_material();
                                     shape.emission = state.emission();
+                                    let shape = Rc::new(shape);
                                     match state.object {
-                                        Some(ref mut o) => o.shapes.push(Rc::new(shape)),
-                                        None => scene_info.shapes.push(Rc::new(shape)),
+                                        Some(ref mut o) => {
+                                            info!("Added inside an object: {}", o.name);
+                                            o.shapes.push(shape)
+                                        }
+                                        None => {
+                                            info!("Put inside scene_info");
+                                            scene_info.shapes.push(shape)
+                                        }
                                     };
                                 }
                             }
