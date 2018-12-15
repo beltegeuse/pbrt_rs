@@ -2,16 +2,17 @@
 name = "pbrt_rs"
 version = "0.0.1"
 authors = ["Adrien Gruson <adrien.gruson@gmail.com>"]
+edition = "2018"
 
 [[bin]]
 name = "pbrt_rs"
 doc = false
 
 [dependencies]
-pest = "^1.0.0-beta"
-pest_derive = "^1.0.0-beta"
-clap = "2.31.1"
-env_logger = "0.5.6"
-log = "0.4.0"
-cgmath = "0.16.1"
+pest = "2.0"
+pest_derive = "2.0"
+clap = "2.32"
+env_logger = "0.6"
+log = "0.4"
+cgmath = "0.16"
 ply-rs = "0.1.1"

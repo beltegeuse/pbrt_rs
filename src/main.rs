@@ -16,7 +16,8 @@ fn main() {
                 .takes_value(true)
                 .index(1)
                 .help("3D scene"),
-        ).arg(Arg::with_name("debug").short("d").help("debug output"))
+        )
+        .arg(Arg::with_name("debug").short("d").help("debug output"))
         .get_matches();
     let scene_path_str = matches
         .value_of("scene")
@@ -40,12 +41,7 @@ fn main() {
     let working_dir = std::path::Path::new(scene_path_str.clone())
         .parent()
         .unwrap();
-    pbrt_rs::read_pbrt_file(
-        scene_path_str,
-        &working_dir,
-        &mut scene_info,
-        &mut state,
-    );
+    pbrt_rs::read_pbrt_file(scene_path_str, &working_dir, &mut scene_info, &mut state);
 
     // Print statistics
     info!("Scenes info: ");
@@ -61,14 +57,16 @@ fn main() {
         .map(|v| match v.data {
             pbrt_rs::Shape::TriMesh(ref v) => v.points.len(),
             _ => 0,
-        }).sum();
+        })
+        .sum();
     let indices_sum: usize = scene_info
         .shapes
         .iter()
         .map(|v| match v.data {
             pbrt_rs::Shape::TriMesh(ref v) => v.indices.len() / 3,
             _ => 0,
-        }).sum();
+        })
+        .sum();
     info!("Total: ");
     info!(" - #triangles: {}", tri_sum);
     info!(" - #indices: {}", indices_sum);

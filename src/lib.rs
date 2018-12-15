@@ -701,7 +701,7 @@ impl State {
         self.matrix.last().unwrap().clone()
     }
     fn replace_matrix(&mut self, m: Matrix4<f32>) {
-        let mut curr_mat = self.matrix.last_mut().unwrap();
+        let curr_mat = self.matrix.last_mut().unwrap();
         curr_mat.clone_from(&m);
     }
     // Named material
@@ -870,7 +870,7 @@ pub fn read_pbrt_file(
                     let m31 = values[13];
                     let m32 = values[14];
                     let m33 = values[15];
-                    
+
                     #[cfg_attr(rustfmt, rustfmt_skip)]
                     let matrix = state.matrix() * Matrix4::new(
                         m00, m01, m02, m03, 
@@ -885,9 +885,10 @@ pub fn read_pbrt_file(
                     if values.len() != 3 {
                         panic!("Scale need to have 3 floats: {:?}", values);
                     }
-                    let matrix = state.matrix() * Matrix4::from_diagonal(Vector4::new(
-                        values[0], values[1], values[2], 1.0,
-                    ));
+                    let matrix = state.matrix()
+                        * Matrix4::from_diagonal(Vector4::new(
+                            values[0], values[1], values[2], 1.0,
+                        ));
                     state.replace_matrix(matrix);
                 }
                 Rule::look_at => {

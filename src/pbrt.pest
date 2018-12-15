@@ -225,4 +225,4 @@ integer = @{
 }
 last_statement = @{ whitespace? ~ "WorldEnd" ~ (whitespace | comment)* }
 whitespace = _{ (" " | "\t" | "\r" | "\n") }
-comment = _{ ( "#" ~ (!("\r" | "\n") ~ any)* ~ ("\n" | "\r\n" | "\r" | eoi) ) }
+comment = _{ ( "#" ~ (!("\r" | "\n") ~ ANY)* ~ ("\n" | "\r\n" | "\r" | EOI) ) }
