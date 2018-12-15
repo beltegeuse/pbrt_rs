@@ -1,5 +1,5 @@
 // Originally from rs_pbrt
-pbrt = _{ whitespace? ~ (statement | comment)* ~ last_statement* }
+pbrt = _{ SOI ~ WHITESPACE? ~ (statement | comment)* ~ last_statement* ~ EOI }
 statement = { active_transform |
               concat_transform |
               keyword |
@@ -223,6 +223,6 @@ integer = @{
             | // or
         '0'..'9' // single digit
 }
-last_statement = @{ whitespace? ~ "WorldEnd" ~ (whitespace | comment)* }
-whitespace = _{ (" " | "\t" | "\r" | "\n") }
-comment = _{ ( "#" ~ (!("\r" | "\n") ~ ANY)* ~ ("\n" | "\r\n" | "\r" | EOI) ) }
+last_statement = @{ WHITESPACE? ~ "WorldEnd" ~ (WHITESPACE | comment)* }
+WHITESPACE = _{ (" " | "\t" | "\r" | "\n") }
+comment = _{ ( "#" ~ (!("\r" | "\n") ~ ANY)* ~ ("\n" | "\r\n" | "\r" | NEWLINE) ) }
