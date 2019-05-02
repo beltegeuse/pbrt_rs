@@ -84,28 +84,102 @@ fn main() {
     info!(" - #indices: {}", indices_sum);
 
     // Camera information
+    info!("Image size: {:?}", scene_info.image_size);
     for cam in &scene_info.cameras {
         info!("Camera information: ");
         match cam {
             pbrt_rs::Camera::Perspective(ref c) => {
                 info!(" - fov: {}", c.fov);
                 info!(" - world_to_camera: {:?}", c.world_to_camera);
+
+                // Compute view direction and position
+                // to help setup other rendering system
+                let mat = c.world_to_camera.inverse_transform().unwrap();
+                let aspect_ratio = scene_info.image_size.x as f32 / scene_info.image_size.y as f32;
+                let fov_rad = Rad(c.fov * aspect_ratio * std::f32::consts::PI / 180.0); //2.0 * f32::tan((fov / 2.0) * f32::consts::PI / 180.0));//(fov * f32::consts::PI / 180.0);
+                let camera_to_sample =
+                    Matrix4::from_nonuniform_scale(-0.5, -0.5 * aspect_ratio, 1.0)
+                        * Matrix4::from_translation(Vector3::new(-1.0, -1.0 / aspect_ratio, 0.0))
+                        * perspective(fov_rad, 1.0, 1e-2, 1000.0)
+                        * Matrix4::from_nonuniform_scale(-1.0, 1.0, -1.0); // undo gluPerspective (z neg)
+                let sample_to_camera = camera_to_sample.inverse_transform().unwrap();
+
+                let near_p = sample_to_camera.transform_point(Point3::new(0.5, 0.5, 0.0));
+                let d = near_p.to_vec().normalize();
+
+                info!(
+                    " - position: {:?}",
+                    mat.transform_point(Point3::new(0.0, 0.0, 0.0))
+                );
+                info!(" - view dir: {:?}", mat.transform_vector(d));
             }
         }
     }
 
     if let Some(obj_path) = matches.value_of("obj") {
         info!("Export in OBJ: {}", obj_path);
+        let obj_file_path = Path::new(obj_path);
+        let mtl_file_path = Path::new(obj_path).with_extension("mtl");
 
-        let mut file = File::create(Path::new(obj_path)).unwrap();
+        let mut file = File::create(obj_file_path).unwrap();
         file.write(b"# OBJ EXPORTED USING pbrt_rs\n").unwrap();
+        writeln!(file, "mtllib {}", mtl_file_path.to_str().unwrap()).unwrap();
+
+        let default_mat = |f: &mut File| {
+            writeln!(f, "Ns 1.0").unwrap();
+            writeln!(f, "Ka 1.000000 1.000000 1.000000").unwrap();
+            writeln!(f, "Kd 0.8 0.8 0.8").unwrap();
+            writeln!(f, "Ke 0.000000 0.000000 0.000000").unwrap();
+            writeln!(f, "Ni 1.000000").unwrap();
+            writeln!(f, "d 1.000000").unwrap();
+            writeln!(f, "illum 1").unwrap();
+        };
+        let emission_mat = |id_light: u32,
+                            shape_name: String,
+                            shape: &pbrt_rs::ShapeInfo,
+                            f_obj: &mut File,
+                            f_mat: &mut File| {
+            info!("Exporting emission:");
+            info!(" - shape_name: {}", shape_name);
+
+            match shape.emission {
+                Some(pbrt_rs::Param::RGB(r, g, b)) => {
+                    info!(" - emission: [{}, {}, {}]", r, g, b);
+                    writeln!(f_obj, "usemtl light_{}", id_light).unwrap();
+                    // Write the material file because the light is special materials
+                    writeln!(f_mat, "newmtl light_{}", id_light).unwrap();
+                    writeln!(f_mat, "Ns 0.0").unwrap();
+                    writeln!(f_mat, "Ka 0.000000 0.000000 0.000000").unwrap();
+                    writeln!(f_mat, "Kd 0.0 0.0 0.0").unwrap();
+                    writeln!(f_mat, "Ke {} {} {}", r, g, b).unwrap();
+                    writeln!(f_mat, "Ni 0.000000").unwrap();
+                    writeln!(f_mat, "d 1.000000").unwrap();
+                    writeln!(f_mat, "illum 1").unwrap();
+                    f_mat.write(b"\n").unwrap();
+                }
+                _ => panic!("No support for this emission profile"),
+            }
+        };
+
+        let mut file_material = File::create(mtl_file_path).unwrap();
+        file_material
+            .write(b"# OBJ EXPORTED USING pbrt_rs\n")
+            .unwrap();
+        {
+            // Write default material
+            writeln!(file_material, "newmtl export_default").unwrap();
+            default_mat(&mut file_material);
+            file_material.write(b"\n").unwrap();
+        }
 
         // Need to write manually the obj file
         // --- Write all uname shapes
         let mut offset_point = 1;
         let mut offset_normal = 1;
         let mut offset_uv = 1;
+        let mut nb_light = 0;
         for (i, shape) in scene_info.shapes.iter().enumerate() {
+            let material_name = shape.material_name.clone();
             match shape.data {
                 pbrt_rs::Shape::TriMesh(ref data) => {
                     // Load the relevent data and make the transformation
@@ -148,6 +222,39 @@ fn main() {
                         }
                         file.write(b"\n").unwrap();
                     }
+
+                    // --- Write material
+                    match material_name {
+                        None => {
+                            if shape.emission.is_none() {
+                                writeln!(file, "usemtl {}", "export_default").unwrap();
+                            } else {
+                                emission_mat(
+                                    nb_light,
+                                    format!("Unamed_{}", i),
+                                    &shape,
+                                    &mut file,
+                                    &mut file_material,
+                                );
+                                nb_light += 1;
+                            }
+                        }
+                        Some(ref m) => {
+                            if shape.emission.is_none() {
+                                writeln!(file, "usemtl {}", m).unwrap();
+                            } else {
+                                warn!("Overwrite materials as it is a light");
+                                emission_mat(
+                                    nb_light,
+                                    format!("Unamed_{}", i),
+                                    &shape,
+                                    &mut file,
+                                    &mut file_material,
+                                );
+                                nb_light += 1;
+                            }
+                        }
+                    };
 
                     // --- Indicies
                     for index in data.indices.chunks(3) {
@@ -216,6 +323,36 @@ fn main() {
                 _ => {
                     panic!("Ignore the type of mesh");
                 }
+            }
+        } // End shapes
+
+        // Export the materials
+        info!("Exporting bsdfs...");
+        for (name, bdsf) in scene_info.materials.iter() {
+            info!(" - {}", name);
+            writeln!(file_material, "newmtl {}", name).unwrap();
+            match bdsf {
+                pbrt_rs::BSDF::Matte(ref _b) => {
+                    warn!("Unsupported glass matte");
+                    default_mat(&mut file_material);
+                }
+                pbrt_rs::BSDF::Glass(ref _b) => {
+                    warn!("Unsupported glass material");
+                    default_mat(&mut file_material);
+                }
+                pbrt_rs::BSDF::Mirror(ref _b) => {
+                    warn!("Unsupported mirror material");
+                    default_mat(&mut file_material);
+                }
+                pbrt_rs::BSDF::Substrate(ref _b) => {
+                    warn!("Unsupported substrate material");
+                    default_mat(&mut file_material);
+                }
+                pbrt_rs::BSDF::Metal(ref _b) => {
+                    warn!("Unsupported metal material");
+                    default_mat(&mut file_material);
+                }
+                _ => panic!("Unsupported type"),
             }
         }
     }
