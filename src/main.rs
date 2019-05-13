@@ -125,6 +125,15 @@ fn main() {
         file.write(b"# OBJ EXPORTED USING pbrt_rs\n").unwrap();
         writeln!(file, "mtllib {}", mtl_file_path.to_str().unwrap()).unwrap();
 
+        let normalize_rgb = |r: &mut f32, g: &mut f32, b: &mut f32| {
+            let max = r.max(b.max(*g));
+            if max > 1.0 {
+                *r /= max;
+                *g /= max;
+                *b /= max;
+            }
+        };
+
         let default_mat = |f: &mut File| {
             writeln!(f, "Ns 1.0").unwrap();
             writeln!(f, "Ka 1.000000 1.000000 1.000000").unwrap();
@@ -327,6 +336,7 @@ fn main() {
         } // End shapes
 
         // Export the materials
+        let mut textures = vec![];
         info!("Exporting bsdfs...");
         for (name, bdsf) in scene_info.materials.iter() {
             info!(" - {}", name);
@@ -339,13 +349,16 @@ fn main() {
                     writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
                     writeln!(file_material, "illum 4").unwrap();
                     match matte.kd {
-                        pbrt_rs::Param::RGB(r, g, b) => {
+                        pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
+                            normalize_rgb(&mut r, &mut g, &mut b);
                             writeln!(file_material, "Kd {} {} {}", r, g, b).unwrap()
                         }
-                        pbrt_rs::Param::Name(ref name) => {
+                        pbrt_rs::Param::Name(ref tex_name) => {
                             writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
-                            writeln!(file_material, "map_Kd {}", name).unwrap();
-                            println!(" - Texture file: {}", name);
+                            let texture = &scene_info.textures[tex_name];
+                            warn!(" - Texture file: {}", texture.filename);
+                            writeln!(file_material, "map_Kd {}", texture.filename).unwrap();
+                            textures.push(texture.filename.clone());
                         }
                         _ => panic!("Unsupported texture for matte material"),
                     }
@@ -369,7 +382,8 @@ fn main() {
                     writeln!(file_material, "Ni 1.00").unwrap();
                     writeln!(file_material, "illum 3").unwrap();
                     match mirror.kr {
-                        pbrt_rs::Param::RGB(r, g, b) => {
+                        pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
+                            normalize_rgb(&mut r, &mut g, &mut b);
                             writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
                         }
                         _ => panic!("Unsupported texture for mirror material"),
@@ -381,13 +395,16 @@ fn main() {
                     writeln!(file_material, "Ni 1.0").unwrap();
                     writeln!(file_material, "illum 4").unwrap();
                     match substrate.ks {
-                        pbrt_rs::Param::RGB(r, g, b) => {
+                        pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
+                            normalize_rgb(&mut r, &mut g, &mut b);
                             writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
                         }
-                        pbrt_rs::Param::Name(ref name) => {
+                        pbrt_rs::Param::Name(ref tex_name) => {
                             writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
-                            writeln!(file_material, "map_Ks {}", name).unwrap();
-                            println!(" - Texture file: {}", name);
+                            let texture = &scene_info.textures[tex_name];
+                            warn!(" - Texture file: {}", texture.filename);
+                            writeln!(file_material, "map_Ks {}", texture.filename).unwrap();
+                            textures.push(texture.filename.clone());
                         }
                         _ => panic!("Unsupported texture for metal material"),
                     }
@@ -395,18 +412,21 @@ fn main() {
                         pbrt_rs::Param::Float(ref v) => {
                             // TODO: Need a conversion formula for phong
                             writeln!(file_material, "Ns {}", 2.0 / v[0]).unwrap();
-                            println!("Found roughness: {}", 2.0 / v[0]);
+                            info!("Found roughness: {}", 2.0 / v[0]);
                         }
                         _ => panic!("Unsupported texture for metal material"),
                     }
                     match substrate.kd {
-                        pbrt_rs::Param::RGB(r, g, b) => {
+                        pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
+                            normalize_rgb(&mut r, &mut g, &mut b);
                             writeln!(file_material, "Kd {} {} {}", r, g, b).unwrap()
                         }
-                        pbrt_rs::Param::Name(ref name) => {
+                        pbrt_rs::Param::Name(ref tex_name) => {
                             writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
-                            writeln!(file_material, "map_Kd {}", name).unwrap();
-                            println!(" - Texture file: {}", name);
+                            let texture = &scene_info.textures[tex_name];
+                            warn!(" - Texture file: {}", texture.filename);
+                            writeln!(file_material, "map_Kd {}", texture.filename).unwrap();
+                            textures.push(texture.filename.clone());
                         }
                         _ => panic!("Unsupported texture for metal material"),
                     }
@@ -418,13 +438,16 @@ fn main() {
                     writeln!(file_material, "Ni 1.00").unwrap();
                     writeln!(file_material, "illum 3").unwrap();
                     match metal.k {
-                        pbrt_rs::Param::RGB(r, g, b) => {
+                        pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
+                            normalize_rgb(&mut r, &mut g, &mut b);
                             writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
                         }
-                        pbrt_rs::Param::Name(ref name) => {
+                        pbrt_rs::Param::Name(ref tex_name) => {
                             writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
-                            writeln!(file_material, "map_Ks {}", name).unwrap();
-                            println!(" - Texture file: {}", name);
+                            let texture = &scene_info.textures[tex_name];
+                            warn!(" - Texture file: {}", texture.filename);
+                            writeln!(file_material, "map_Ks {}", texture.filename).unwrap();
+                            textures.push(texture.filename.clone());
                         }
                         _ => panic!("Unsupported texture for metal material"),
                     }
@@ -432,13 +455,19 @@ fn main() {
                         pbrt_rs::Param::Float(ref v) => {
                             // TODO: Need a conversion formula for phong
                             writeln!(file_material, "Ns {}", 2.0 / v[0]).unwrap();
-                            println!("Found roughness: {}", 2.0 / v[0]);
+                            info!("Found roughness: {}", 2.0 / v[0]);
                         }
                         _ => panic!("Unsupported texture for metal material"),
                     }
                 }
                 _ => panic!("Unsupported type"),
             }
+            file_material.write(b"\n").unwrap();
+        } // End of materials
+
+        info!("Number of textures detected: {}", textures.len());
+        for tex in &textures {
+            info!(" - {}", tex);
         }
     }
 }
