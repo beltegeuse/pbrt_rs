@@ -154,7 +154,7 @@ fn main() {
                     writeln!(f_mat, "Ke {} {} {}", r, g, b).unwrap();
                     writeln!(f_mat, "Ni 0.000000").unwrap();
                     writeln!(f_mat, "d 1.000000").unwrap();
-                    writeln!(f_mat, "illum 1").unwrap();
+                    writeln!(f_mat, "illum 7").unwrap();
                     f_mat.write(b"\n").unwrap();
                 }
                 _ => panic!("No support for this emission profile"),
@@ -332,25 +332,110 @@ fn main() {
             info!(" - {}", name);
             writeln!(file_material, "newmtl {}", name).unwrap();
             match bdsf {
-                pbrt_rs::BSDF::Matte(ref _b) => {
-                    warn!("Unsupported glass matte");
-                    default_mat(&mut file_material);
+                pbrt_rs::BSDF::Matte(ref matte) => {
+                    writeln!(file_material, "Ns 1.0").unwrap();
+                    writeln!(file_material, "Ka 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Tf 1.0 1.0 1.0").unwrap();
+                    writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "illum 4").unwrap();
+                    match matte.kd {
+                        pbrt_rs::Param::RGB(r, g, b) => {
+                            writeln!(file_material, "Kd {} {} {}", r, g, b).unwrap()
+                        }
+                        pbrt_rs::Param::Name(ref name) => {
+                            writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
+                            writeln!(file_material, "map_Kd {}", name).unwrap();
+                            println!(" - Texture file: {}", name);
+                        }
+                        _ => panic!("Unsupported texture for matte material"),
+                    }
                 }
                 pbrt_rs::BSDF::Glass(ref _b) => {
-                    warn!("Unsupported glass material");
-                    default_mat(&mut file_material);
+                    writeln!(file_material, "Ns 1000").unwrap();
+                    writeln!(file_material, "Ka 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Tf 0.1 0.1 0.1").unwrap();
+                    writeln!(file_material, "Ks 0.5 0.5 0.5").unwrap();
+                    writeln!(file_material, "Ni 1.31").unwrap(); // Glass
+                    writeln!(file_material, "d 1.000000").unwrap();
+                    writeln!(file_material, "illum 7").unwrap();
+                    // TODO: Read the properties
                 }
-                pbrt_rs::BSDF::Mirror(ref _b) => {
-                    warn!("Unsupported mirror material");
-                    default_mat(&mut file_material);
+                pbrt_rs::BSDF::Mirror(ref mirror) => {
+                    writeln!(file_material, "Ns 100000.0").unwrap();
+                    writeln!(file_material, "Ka 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Tf 1.0 1.0 1.0").unwrap();
+                    writeln!(file_material, "Ni 1.00").unwrap();
+                    writeln!(file_material, "illum 3").unwrap();
+                    match mirror.kr {
+                        pbrt_rs::Param::RGB(r, g, b) => {
+                            writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
+                        }
+                        _ => panic!("Unsupported texture for mirror material"),
+                    }
                 }
-                pbrt_rs::BSDF::Substrate(ref _b) => {
-                    warn!("Unsupported substrate material");
-                    default_mat(&mut file_material);
+                pbrt_rs::BSDF::Substrate(ref substrate) => {
+                    writeln!(file_material, "Ka 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Tf 1.0 1.0 1.0").unwrap();
+                    writeln!(file_material, "Ni 1.0").unwrap();
+                    writeln!(file_material, "illum 4").unwrap();
+                    match substrate.ks {
+                        pbrt_rs::Param::RGB(r, g, b) => {
+                            writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
+                        }
+                        pbrt_rs::Param::Name(ref name) => {
+                            writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
+                            writeln!(file_material, "map_Ks {}", name).unwrap();
+                            println!(" - Texture file: {}", name);
+                        }
+                        _ => panic!("Unsupported texture for metal material"),
+                    }
+                    match substrate.u_roughness {
+                        pbrt_rs::Param::Float(ref v) => {
+                            // TODO: Need a conversion formula for phong
+                            writeln!(file_material, "Ns {}", 2.0 / v[0]).unwrap();
+                            println!("Found roughness: {}", 2.0 / v[0]);
+                        }
+                        _ => panic!("Unsupported texture for metal material"),
+                    }
+                    match substrate.kd {
+                        pbrt_rs::Param::RGB(r, g, b) => {
+                            writeln!(file_material, "Kd {} {} {}", r, g, b).unwrap()
+                        }
+                        pbrt_rs::Param::Name(ref name) => {
+                            writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
+                            writeln!(file_material, "map_Kd {}", name).unwrap();
+                            println!(" - Texture file: {}", name);
+                        }
+                        _ => panic!("Unsupported texture for metal material"),
+                    }
                 }
-                pbrt_rs::BSDF::Metal(ref _b) => {
-                    warn!("Unsupported metal material");
-                    default_mat(&mut file_material);
+                pbrt_rs::BSDF::Metal(ref metal) => {
+                    writeln!(file_material, "Ka 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Kd 0.0 0.0 0.0").unwrap();
+                    writeln!(file_material, "Tf 1.0 1.0 1.0").unwrap();
+                    writeln!(file_material, "Ni 1.00").unwrap();
+                    writeln!(file_material, "illum 3").unwrap();
+                    match metal.k {
+                        pbrt_rs::Param::RGB(r, g, b) => {
+                            writeln!(file_material, "Ks {} {} {}", r, g, b).unwrap()
+                        }
+                        pbrt_rs::Param::Name(ref name) => {
+                            writeln!(file_material, "Ks 0.0 0.0 0.0").unwrap();
+                            writeln!(file_material, "map_Ks {}", name).unwrap();
+                            println!(" - Texture file: {}", name);
+                        }
+                        _ => panic!("Unsupported texture for metal material"),
+                    }
+                    match metal.roughness {
+                        pbrt_rs::Param::Float(ref v) => {
+                            // TODO: Need a conversion formula for phong
+                            writeln!(file_material, "Ns {}", 2.0 / v[0]).unwrap();
+                            println!("Found roughness: {}", 2.0 / v[0]);
+                        }
+                        _ => panic!("Unsupported texture for metal material"),
+                    }
                 }
                 _ => panic!("Unsupported type"),
             }
