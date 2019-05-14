@@ -266,6 +266,10 @@ fn main() {
                     };
 
                     // --- Indicies
+                    if data.indices.len() % 3  != 0 {
+                        error!("Number of vertices not multiples of 3: {}", data.indices.len());
+                        continue;
+                    }
                     for index in data.indices.chunks(3) {
                         let i1 = index[0] as usize;
                         let i2 = index[1] as usize;

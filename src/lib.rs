@@ -97,6 +97,18 @@ impl ply::PropertyAccess for PlyFace {
     fn set_property(&mut self, key: String, property: ply::Property) {
         match (key.as_ref(), property) {
             ("vertex_indices", ply::Property::ListInt(vec)) => self.vertex_index = vec,
+            ("vertex_indices", ply::Property::ListUInt(vec)) => {
+                self.vertex_index = vec![0; vec.len()];
+                for (i,v) in vec.iter().enumerate() {
+                    self.vertex_index[i] = *v as i32;
+                }
+            }
+            ("vertex_indices", ply::Property::ListUChar(vec)) => {
+               self.vertex_index = vec![0; vec.len()];
+                for (i,v) in vec.iter().enumerate() {
+                    self.vertex_index[i] = *v as i32;
+                }
+            }
             (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
         }
     }
@@ -141,6 +153,14 @@ impl ply::PropertyAccess for PlyVertex {
                 self.uv.x = v
             }
             ("v", ply::Property::Float(v)) => {
+                self.has_uv = true;
+                self.uv.y = v
+            }
+            ("s", ply::Property::Float(v)) => {
+                self.has_uv = true;
+                self.uv.x = v
+            }
+            ("t", ply::Property::Float(v)) => {
                 self.has_uv = true;
                 self.uv.y = v
             }
@@ -591,6 +611,7 @@ impl Shape {
                     .remove("filename")
                     .expect("filename is required")
                     .to_name();
+                info!("Reading {} ...", filename);
                 let filename = wk.join(filename);
                 let mut f = match std::fs::File::open(filename.clone()) {
                     Ok(f) => f,
@@ -627,7 +648,16 @@ impl Shape {
                 info!(" - #face: {}", face_list.len());
                 let mut indices = Vec::new();
                 for f in face_list {
-                    indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
+                    if f.vertex_index.len() == 3 {
+                        indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
+                    } else if f.vertex_index.len() == 4 {
+                        // Quad is detected
+                        let quad_indices = f.vertex_index.into_iter().map(|v| v as u32).collect::<Vec<u32>>();
+                        indices.extend(&[quad_indices[0], quad_indices[1], quad_indices[2]]);
+                        indices.extend(&[quad_indices[2], quad_indices[3], quad_indices[0]]);
+                    } else {
+
+                    }
                 }
                 let normals = if vertex_list[0].has_normal {
                     Some(vertex_list.iter().map(|v| v.normal).collect())
