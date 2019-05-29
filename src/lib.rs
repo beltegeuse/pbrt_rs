@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::cognitive_complexity)]
+
 // For logging
 #[macro_use]
 extern crate log;
@@ -30,10 +33,10 @@ fn pbrt_matrix(pairs: pest::iterators::Pairs<Rule>) -> Vec<f32> {
     let mut m: Vec<f32> = Vec::new();
     for rule_pair in pairs {
         // ignore brackets
-        let not_opening: bool = rule_pair.as_str() != String::from("[");
-        let not_closing: bool = rule_pair.as_str() != String::from("]");
+        let not_opening: bool = rule_pair.as_str() != "[";
+        let not_closing: bool = rule_pair.as_str() != "]";
         if not_opening && not_closing {
-            let number = f32::from_str(rule_pair.clone().into_span().as_str()).unwrap();
+            let number = f32::from_str(rule_pair.clone().as_span().as_str()).unwrap();
             m.push(number);
         }
     }
@@ -46,24 +49,24 @@ where
     let mut values: Vec<T> = Vec::new();
     // single float or several floats using brackets
     let ident = pairs.next();
-    let name = String::from(ident.unwrap().clone().into_span().as_str());
+    let name = String::from(ident.unwrap().clone().as_span().as_str());
     let option = pairs.next();
     let lbrack = option.clone().unwrap();
-    if lbrack.as_str() == String::from("[") {
+    if lbrack.as_str() == "[" {
         // check for brackets
         let mut number = pairs.next();
         while number.is_some() {
             let pair = number.unwrap().clone();
-            if pair.as_str() == String::from("]") {
+            if pair.as_str() == "]" {
                 // closing bracket found
                 break;
             } else {
-                let value = pair.into_span().as_str();
+                let value = pair.as_span().as_str();
                 // TODO: Only necessary for some of the names... might impact the performance of the parser
                 let value = value.trim_matches('\"').to_string();
                 let value = value
                     .parse::<T>()
-                    .expect(&format!("parsing error on parameter: {}", value));
+                    .unwrap_or_else(|_| panic!("parsing error on parameter: {}", value));
                 values.push(value);
             }
             number = pairs.next();
@@ -74,7 +77,7 @@ where
         while number.is_some() {
             let pair = number.unwrap().clone();
             let value = pair
-                .into_span()
+                .as_span()
                 .as_str()
                 .parse::<T>()
                 .expect("parsing error on parameter");
@@ -106,7 +109,7 @@ impl ply::PropertyAccess for PlyFace {
             ("vertex_indices", ply::Property::ListUChar(vec)) => {
                self.vertex_index = vec![0; vec.len()];
                 for (i,v) in vec.iter().enumerate() {
-                    self.vertex_index[i] = *v as i32;
+                    self.vertex_index[i] = i32::from(*v);
                 }
             }
             (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
@@ -172,17 +175,32 @@ impl ply::PropertyAccess for PlyVertex {
 /// Intermediate representation
 /// for parsing the parameters
 #[derive(Debug, Clone)]
+pub struct RGBValue {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+impl RGBValue {
+    pub fn color(v: f32) -> RGBValue {
+        RGBValue {
+            r: v,
+            g: v,
+            b: v,
+        }
+    }
+}
+#[derive(Debug, Clone)]
 pub enum Param {
     Integer(Vec<i32>),
     Float(Vec<f32>),
     Vector3(Vec<Vector3<f32>>),
     Vector2(Vec<Vector2<f32>>),
     Name(String),
-    RGB(f32, f32, f32),
+    RGB(RGBValue),
     Bool(bool),
 }
 impl Param {
-    fn to_float(self) -> Vec<f32> {
+    fn into_float(self) -> Vec<f32> {
         match self {
             Param::Float(v) => v,
             _ => panic!("impossible to convert to float: {:?}", self),
@@ -193,7 +211,7 @@ impl Param {
         (name, Param::Float(values))
     }
 
-    fn to_name(self) -> String {
+    fn into_name(self) -> String {
         match self {
             Param::Name(v) => v,
             _ => panic!("impossible to convert to name: {:?}", self),
@@ -206,18 +224,23 @@ impl Param {
         (name, Param::Name(values))
     }
 
-    fn to_rgb(self) -> (f32, f32, f32) {
+    fn into_rgb(self) -> RGBValue {
         match self {
-            Param::RGB(r, g, b) => (r, g, b),
+            Param::RGB(rgb) => rgb,
             _ => panic!("impossible to convert to rgb: {:?}", self),
         }
     }
     fn parse_rgb(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<f32>(pairs);
-        (name, Param::RGB(values[0], values[1], values[2]))
+        (name, 
+            Param::RGB( RGBValue {
+                r: values[0], g: values[1], b: values[2]
+                }
+            )
+        )
     }
 
-    fn to_integer(self) -> Vec<i32> {
+    fn into_integer(self) -> Vec<i32> {
         match self {
             Param::Integer(v) => v,
             _ => panic!("impossible to convert to integer: {:?}", self),
@@ -228,7 +251,7 @@ impl Param {
         (name, Param::Integer(values))
     }
 
-    fn to_vector3(self) -> Vec<Vector3<f32>> {
+    fn into_vector3(self) -> Vec<Vector3<f32>> {
         match self {
             Param::Vector3(v) => v,
             _ => panic!("impossible to convert to integer: {:?}", self),
@@ -246,7 +269,7 @@ impl Param {
         (name, Param::Vector3(values))
     }
 
-    fn to_vector2(self) -> Vec<Vector2<f32>> {
+    fn into_vector2(self) -> Vec<Vector2<f32>> {
         match self {
             Param::Vector2(v) => v,
             _ => panic!("impossible to convert to integer: {:?}", self),
@@ -261,7 +284,7 @@ impl Param {
         (name, Param::Vector2(values))
     }
 
-    fn to_bool(self) -> bool {
+    fn into_bool(self) -> bool {
         match self {
             Param::Bool(v) => v,
             _ => panic!("impossible to convert to bool: {:?}", self),
@@ -283,7 +306,7 @@ fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<Stri
             Rule::string => {
                 let mut string_pairs = pair.into_inner();
                 let ident = string_pairs.next();
-                name.push(String::from_str(ident.unwrap().clone().into_span().as_str()).unwrap());
+                name.push(String::from_str(ident.unwrap().clone().as_span().as_str()).unwrap());
             }
             Rule::parameter => {
                 for parameter_pair in pair.into_inner() {
@@ -359,7 +382,7 @@ impl Camera {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "perspective" => {
-                let fov = param.remove("fov").expect("fov is not given").to_float()[0];
+                let fov = param.remove("fov").expect("fov is not given").into_float()[0];
                 Some(Camera::Perspective(CameraPerspective {
                     fov,
                     world_to_camera: mat,
@@ -383,11 +406,11 @@ impl Texture {
         let (name, mut param) = parse_parameters(pairs);
 
         if let Some(filename) = param.remove("filename") {
-            let trilinear = remove_default!(param, "trilinear", Param::Bool(true)).to_bool();
+            let trilinear = remove_default!(param, "trilinear", Param::Bool(true)).into_bool();
             Some((
                 name,
                 Texture {
-                    filename: wk.join(filename.to_name()).to_str().unwrap().to_string(),
+                    filename: wk.join(filename.into_name()).to_str().unwrap().to_string(),
                     trilinear,
                 },
             ))
@@ -451,11 +474,11 @@ impl BSDF {
             param
                 .remove("type")
                 .expect("bsdf type param is required")
-                .to_name()
+                .into_name()
         };
         match bsdf_type.as_ref() {
             "matte" => {
-                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
+                let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
                 let sigma = remove_default!(param, "sigma", Param::Float(vec![0.0]));
                 let bumpmap = param.remove("bumpmap");
                 if !param.is_empty() {
@@ -466,14 +489,15 @@ impl BSDF {
             "metal" => {
                 // TODO: Need to be able to export other material params
                 let eta =
-                    remove_default!(param, "eta", Param::RGB(0.19999069, 0.9220846, 1.0998759));
-                let k = remove_default!(param, "k", Param::RGB(3.9046354, 2.4476333, 2.1376526));
+                    remove_default!(param, "eta", Param::RGB(RGBValue {
+                        r: 0.199_990_69, g: 0.922_084_6, b: 1.099_875_9}));
+                let k = remove_default!(param, "k", Param::RGB(RGBValue { r: 3.904_635_4, g: 2.447_633_3, b: 2.137_652_6 }));
                 let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
                 let u_roughness = param.remove("uroughness");
                 let v_roughness = param.remove("vroughness");
                 let bumpmap = param.remove("bumpmap");
                 let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
                 if !param.is_empty() {
                     warn!("Miss parameters for Metal: {} => {:?}", name, param);
                 }
@@ -491,13 +515,13 @@ impl BSDF {
                 ))
             }
             "substrate" => {
-                let kd = remove_default!(param, "Kd", Param::RGB(0.5, 0.5, 0.5));
-                let ks = remove_default!(param, "Ks", Param::RGB(0.5, 0.5, 0.5));
+                let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
+                let ks = remove_default!(param, "Ks", Param::RGB(RGBValue::color(0.5)));
                 let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
                 let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
                 let bumpmap = param.remove("bumpmap");
                 let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
                 if !param.is_empty() {
                     warn!("Miss parameters for Substrate: {} => {:?}", name, param);
                 }
@@ -514,13 +538,13 @@ impl BSDF {
                 ))
             }
             "glass" => {
-                let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
-                let kt = remove_default!(param, "Kt", Param::RGB(1.0, 1.0, 1.0));
+                let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
+                let kt = remove_default!(param, "Kt", Param::RGB(RGBValue::color(1.0)));
                 let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
                 let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
                 let bumpmap = param.remove("bumpmap");
                 let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).to_bool();
+                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
                 let index = if let Some(eta) = param.remove("eta") {
                     eta
                 } else {
@@ -543,7 +567,7 @@ impl BSDF {
                 ))
             }
             "mirror" => {
-                let kr = remove_default!(param, "Kr", Param::RGB(1.0, 1.0, 1.0));
+                let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
                 let bumpmap = param.remove("bumpmap");
                 Some((name, BSDF::Mirror(MirrorBSDF { kr, bumpmap })))
             }
@@ -572,23 +596,23 @@ impl Shape {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "trianglemesh" => {
-                let points = param.remove("P").expect("P is required").to_vector3();
+                let points = param.remove("P").expect("P is required").into_vector3();
                 let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
                 let indices = param
                     .remove("indices")
                     .expect("indice is required")
-                    .to_integer()
+                    .into_integer()
                     .into_iter()
                     .map(|v| v as u32)
                     .collect();
                 let normals = if let Some(v) = param.remove("N") {
-                    Some(v.to_vector3())
+                    Some(v.into_vector3())
                 } else {
                     None
                 };
                 let uv = if let Some(v) = param.remove("uv") {
                     Some(
-                        v.to_float()
+                        v.into_float()
                             .chunks(2)
                             .map(|v| Vector2::new(v[0], v[1]))
                             .collect(),
@@ -610,10 +634,10 @@ impl Shape {
                 let filename = param
                     .remove("filename")
                     .expect("filename is required")
-                    .to_name();
+                    .into_name();
                 info!("Reading {} ...", filename);
                 let filename = wk.join(filename);
-                let mut f = match std::fs::File::open(filename.clone()) {
+                let f = match std::fs::File::open(filename.clone()) {
                     Ok(f) => f,
                     Err(e) => {
                         panic!("Error in opening: {:?} [wk: {:?}] => {:?}", filename, wk, e);
@@ -692,6 +716,72 @@ impl Shape {
     }
 }
 
+/// Lights
+#[derive(Debug)]
+pub struct DistantLight {
+    pub luminance: Param,
+    pub from: Point3<f32>,
+    pub to: Point3<f32>,
+    pub scale: RGBValue,
+}
+#[derive(Debug)]
+pub struct InfiniteLight {
+    pub luminance: Param, // Can be RGB or map
+    pub samples: u32,
+    pub scale: RGBValue,
+}
+#[derive(Debug)]
+pub struct PointLight {
+    pub intensity: RGBValue,
+    pub from: Point3<f32>,
+    pub scale: RGBValue,
+}
+#[derive(Debug)]
+pub enum Light {
+    Distant(DistantLight),
+    Infinite(InfiniteLight),
+    Point(PointLight)
+}
+impl Light {
+    fn new(pairs: pest::iterators::Pair<Rule>) -> Option<Self> {
+        let (name, mut param) = parse_parameters(pairs);
+        info!("Reading light source: {}", name);
+        let scale = if let Some(scale) = param.remove("scale") {
+            let s = scale.into_rgb();
+            info!(" - Scale: {:?}", s);
+            s
+        } else {
+            RGBValue::color(1.0)
+        };
+
+        match name.as_ref() {
+            "infinite" => {
+                let samples = if let Some(samples) = param.remove("samples") {
+                    samples.into_integer()[0] as u32
+                } else {
+                    1
+                };
+                let luminance = if let Some(luminance) = param.remove("L") {
+                    luminance
+                } else {
+                    Param::RGB(RGBValue::color(1.0))
+                };
+                let luminance = if let Some(mapname) = param.remove("mapname") {
+                    mapname
+                } else { luminance };
+                Some(Light::Infinite( InfiniteLight {
+                    luminance,
+                    samples,
+                    scale
+                }))
+            }
+            _ => {
+                warn!("Light case with {} is not cover", name);
+                None
+            }
+        }
+    }
+}
 /// State of the parser
 #[derive(Clone, Debug)]
 pub struct State {
@@ -715,7 +805,7 @@ impl State {
     fn save(&mut self) {
         let new_material = self.named_material.last().unwrap().clone();
         self.named_material.push(new_material);
-        let new_matrix = self.matrix.last().unwrap().clone();
+        let new_matrix = *self.matrix.last().unwrap();
         self.matrix.push(new_matrix);
         let new_emission = self.emission.last().unwrap().clone();
         self.emission.push(new_emission);
@@ -728,7 +818,7 @@ impl State {
 
     // Matrix
     fn matrix(&self) -> Matrix4<f32> {
-        self.matrix.last().unwrap().clone()
+        *self.matrix.last().unwrap()
     }
     fn replace_matrix(&mut self, m: Matrix4<f32>) {
         let curr_mat = self.matrix.last_mut().unwrap();
@@ -804,6 +894,7 @@ pub struct Scene {
     pub shapes: Vec<Rc<ShapeInfo>>,               //< unamed shapes
     pub objects: HashMap<String, Rc<ObjectInfo>>, //< shapes with objects
     pub instances: Vec<InstanceInfo>,             //< instances on the shapes
+    pub lights: Vec<Light>,                       //< list of all light sources
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -818,6 +909,7 @@ impl Default for Scene {
             shapes: Vec::default(),
             objects: HashMap::default(),
             instances: Vec::default(),
+            lights: Vec::default(),
         }
     }
 }
@@ -830,7 +922,7 @@ pub fn read_pbrt_file(
 ) {
     let now = Instant::now();
     info!("Loading: {}", path);
-    let file = std::fs::File::open(path.clone()).expect(&format!("Impossible to open {}", path));
+    let file = std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
     let mut reader = std::io::BufReader::new(file);
     let mut str_buf: String = String::default();
     let _num_bytes = reader.read_to_string(&mut str_buf);
@@ -840,7 +932,7 @@ pub fn read_pbrt_file(
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
     for pair in pairs {
-        let span = pair.clone().into_span();
+        let span = pair.clone().as_span();
         debug!("Rule:    {:?}", pair.as_rule());
         debug!("Span:    {:?}", span);
         debug!("Text:    {}", span.as_str());
@@ -870,7 +962,7 @@ pub fn read_pbrt_file(
                     let m31 = values[13];
                     let m32 = values[14];
                     let m33 = values[15];
-                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    #[rustfmt::skip]
                     let matrix = Matrix4::new(
                         m00, m01, m02, m03, 
                         m10, m11, m12, m13, 
@@ -901,7 +993,7 @@ pub fn read_pbrt_file(
                     let m32 = values[14];
                     let m33 = values[15];
 
-                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    #[rustfmt::skip]
                     let matrix = state.matrix() * Matrix4::new(
                         m00, m01, m02, m03, 
                         m10, m11, m12, m13, 
@@ -934,11 +1026,11 @@ pub fn read_pbrt_file(
                     let left = -dir.cross(up.normalize()).normalize();
                     let new_up = dir.cross(left);
 
-                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    #[rustfmt::skip]
                     let matrix = state.matrix() *  Matrix4::new(
-                        left.x.clone(), left.y.clone(), left.z.clone(), 0.0,
-                        new_up.x.clone(), new_up.y.clone(), new_up.z.clone(), 0.0,
-                        dir.x.clone(), dir.y.clone(), dir.z.clone(), 0.0,
+                        left.x, left.y, left.z, 0.0,
+                        new_up.x, new_up.y, new_up.z, 0.0,
+                        dir.x, dir.y, dir.z, 0.0,
                         eye.x, eye.y, eye.z, 1.0,
                     ).inverse_transform().unwrap();
 
@@ -1001,8 +1093,8 @@ pub fn read_pbrt_file(
                             Rule::film => {
                                 let (_name, mut param) = parse_parameters(rule_pair);
                                 scene_info.image_size = Vector2::new(
-                                    param.remove("xresolution").unwrap().to_integer()[0] as u32,
-                                    param.remove("yresolution").unwrap().to_integer()[0] as u32,
+                                    param.remove("xresolution").unwrap().into_integer()[0] as u32,
+                                    param.remove("yresolution").unwrap().into_integer()[0] as u32,
                                 );
                             }
                             Rule::area_light_source => {
@@ -1015,6 +1107,11 @@ pub fn read_pbrt_file(
                                         }
                                     }
                                     _ => warn!("Unsuppored area light: {}", typename),
+                                }
+                            }
+                            Rule::light_source => {
+                                if let Some(light) = Light::new(rule_pair) {
+                                    scene_info.lights.push(light);
                                 }
                             }
                             Rule::include => {

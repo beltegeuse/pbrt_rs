@@ -1,3 +1,5 @@
+#![allow(clippy::cognitive_complexity)]
+
 extern crate cgmath;
 extern crate clap;
 extern crate env_logger;
@@ -14,12 +16,12 @@ use std::path::Path;
  Export PBRT files to Obj
 */
 fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File) {
-    let normalize_rgb = |r: &mut f32, g: &mut f32, b: &mut f32| {
-        let max = r.max(b.max(*g));
+    let normalize_rgb = |rgb: &mut pbrt_rs::RGBValue| {
+        let max = rgb.r.max(rgb.b.max(rgb.g));
         if max > 1.0 {
-            *r /= max;
-            *g /= max;
-            *b /= max;
+            rgb.r /= max;
+            rgb.g /= max;
+            rgb.b /= max;
         }
     };
 
@@ -41,19 +43,19 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
         info!(" - shape_name: {}", shape_name);
 
         match shape.emission {
-            Some(pbrt_rs::Param::RGB(r, g, b)) => {
-                info!(" - emission: [{}, {}, {}]", r, g, b);
+            Some(pbrt_rs::Param::RGB(ref rgb)) => {
+                info!(" - emission: [{}, {}, {}]", rgb.r, rgb.g, rgb.b);
                 writeln!(f_obj, "usemtl light_{}", id_light).unwrap();
                 // Write the material file because the light is special materials
                 writeln!(f_mat, "newmtl light_{}", id_light).unwrap();
                 writeln!(f_mat, "Ns 0.0").unwrap();
                 writeln!(f_mat, "Ka 0.000000 0.000000 0.000000").unwrap();
                 writeln!(f_mat, "Kd 0.0 0.0 0.0").unwrap();
-                writeln!(f_mat, "Ke {} {} {}", r, g, b).unwrap();
+                writeln!(f_mat, "Ke {} {} {}", rgb.r, rgb.g, rgb.b).unwrap();
                 writeln!(f_mat, "Ni 0.000000").unwrap();
                 writeln!(f_mat, "d 1.000000").unwrap();
                 writeln!(f_mat, "illum 7").unwrap();
-                f_mat.write(b"\n").unwrap();
+                f_mat.write_all(b"\n").unwrap();
             }
             _ => panic!("No support for this emission profile"),
         }
@@ -63,7 +65,7 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
         // Write default material
         writeln!(mat_file, "newmtl export_default").unwrap();
         default_mat(mat_file);
-        mat_file.write(b"\n").unwrap();
+        mat_file.write_all(b"\n").unwrap();
     }
 
     // Need to write manually the obj file
@@ -101,27 +103,27 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 for p in &points {
                     writeln!(file, "v {} {} {}", p.x, p.y, p.z).unwrap();
                 }
-                file.write(b"\n").unwrap();
+                file.write_all(b"\n").unwrap();
                 if !uv.is_empty() {
                     number_channels += 1;
                     for t in &uv {
                         writeln!(file, "vt {} {}", t.x, t.y).unwrap();
                     }
-                    file.write(b"\n").unwrap();
+                    file.write_all(b"\n").unwrap();
                 }
                 if !normals.is_empty() {
                     number_channels += 1;
                     for n in &normals {
                         writeln!(file, "vn {} {} {}", n.x, n.y, n.z).unwrap();
                     }
-                    file.write(b"\n").unwrap();
+                    file.write_all(b"\n").unwrap();
                 }
 
                 // --- Write material
                 match material_name {
                     None => {
                         if shape.emission.is_none() {
-                            writeln!(file, "usemtl {}", "export_default").unwrap();
+                            writeln!(file, "usemtl export_default").unwrap();
                         } else {
                             emission_mat(nb_light, format!("Unamed_{}", i), &shape, file, mat_file);
                             nb_light += 1;
@@ -204,13 +206,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                         _ => panic!("Unsupported number of channels"),
                     }
                 }
-                file.write(b"\n").unwrap();
+                file.write_all(b"\n").unwrap();
                 offset_point += points.len();
                 offset_normal += normals.len();
                 offset_uv += uv.len();
-            }
-            _ => {
-                panic!("Ignore the type of mesh");
             }
         }
     } // End shapes
@@ -229,9 +228,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "illum 4").unwrap();
                 match matte.kd {
-                    pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
-                        normalize_rgb(&mut r, &mut g, &mut b);
-                        writeln!(mat_file, "Kd {} {} {}", r, g, b).unwrap()
+                    pbrt_rs::Param::RGB(ref rgb) => {
+                        let mut rgb = rgb.clone();
+                        normalize_rgb(&mut rgb);
+                        writeln!(mat_file, "Kd {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
                     pbrt_rs::Param::Name(ref tex_name) => {
                         writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
@@ -262,9 +262,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 writeln!(mat_file, "Ni 1.00").unwrap();
                 writeln!(mat_file, "illum 3").unwrap();
                 match mirror.kr {
-                    pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
-                        normalize_rgb(&mut r, &mut g, &mut b);
-                        writeln!(mat_file, "Ks {} {} {}", r, g, b).unwrap()
+                    pbrt_rs::Param::RGB(ref rgb) => {
+                        let mut rgb = rgb.clone();
+                        normalize_rgb(&mut rgb);
+                        writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
                     _ => panic!("Unsupported texture for mirror material"),
                 }
@@ -275,9 +276,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 writeln!(mat_file, "Ni 1.0").unwrap();
                 writeln!(mat_file, "illum 4").unwrap();
                 match substrate.ks {
-                    pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
-                        normalize_rgb(&mut r, &mut g, &mut b);
-                        writeln!(mat_file, "Ks {} {} {}", r, g, b).unwrap()
+                    pbrt_rs::Param::RGB(ref rgb) => {
+                        let mut rgb = rgb.clone();
+                        normalize_rgb(&mut rgb);
+                        writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
                     pbrt_rs::Param::Name(ref tex_name) => {
                         writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
@@ -297,9 +299,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                     _ => panic!("Unsupported texture for metal material"),
                 }
                 match substrate.kd {
-                    pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
-                        normalize_rgb(&mut r, &mut g, &mut b);
-                        writeln!(mat_file, "Kd {} {} {}", r, g, b).unwrap()
+                    pbrt_rs::Param::RGB(ref rgb) => {
+                        let mut rgb = rgb.clone();
+                        normalize_rgb(&mut rgb);
+                        writeln!(mat_file, "Kd {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
                     pbrt_rs::Param::Name(ref tex_name) => {
                         writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
@@ -318,9 +321,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 writeln!(mat_file, "Ni 1.00").unwrap();
                 writeln!(mat_file, "illum 3").unwrap();
                 match metal.k {
-                    pbrt_rs::Param::RGB(mut r, mut g, mut b) => {
-                        normalize_rgb(&mut r, &mut g, &mut b);
-                        writeln!(mat_file, "Ks {} {} {}", r, g, b).unwrap()
+                    pbrt_rs::Param::RGB(ref rgb) => {
+                        let mut rgb = rgb.clone();
+                        normalize_rgb(&mut rgb);
+                        writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
                     pbrt_rs::Param::Name(ref tex_name) => {
                         writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
@@ -340,9 +344,8 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                     _ => panic!("Unsupported texture for metal material"),
                 }
             }
-            _ => panic!("Unsupported type"),
         }
-        mat_file.write(b"\n").unwrap();
+        mat_file.write_all(b"\n").unwrap();
     } // End of materials
 
     info!("Number of textures detected: {}", textures.len());
@@ -415,21 +418,19 @@ fn main() {
         // FIXME: add debug flag?
         env_logger::Builder::from_default_env()
             .default_format_timestamp(false)
-            .parse("debug")
+            .parse_filters("debug")
             .init();
     } else {
         env_logger::Builder::from_default_env()
             .default_format_timestamp(false)
-            .parse("info")
+            .parse_filters("info")
             .init();
     }
 
     // The parsing
     let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
-    let working_dir = std::path::Path::new(scene_path_str.clone())
-        .parent()
-        .unwrap();
+    let working_dir = std::path::Path::new(scene_path_str).parent().unwrap();
     pbrt_rs::read_pbrt_file(scene_path_str, &working_dir, &mut scene_info, &mut state);
 
     // Print statistics
@@ -445,7 +446,6 @@ fn main() {
         .iter()
         .map(|v| match v.data {
             pbrt_rs::Shape::TriMesh(ref v) => v.points.len(),
-            _ => 0,
         })
         .sum();
     let indices_sum: usize = scene_info
@@ -453,7 +453,6 @@ fn main() {
         .iter()
         .map(|v| match v.data {
             pbrt_rs::Shape::TriMesh(ref v) => v.indices.len() / 3,
-            _ => 0,
         })
         .sum();
     info!("Total: ");
@@ -470,11 +469,13 @@ fn main() {
         let mtl_file_path = Path::new(obj_path).with_extension("mtl");
 
         let mut file = File::create(obj_file_path).unwrap();
-        file.write(b"# OBJ EXPORTED USING pbrt_rs\n").unwrap();
+        file.write_all(b"# OBJ EXPORTED USING pbrt_rs\n").unwrap();
         writeln!(file, "mtllib {}", mtl_file_path.to_str().unwrap()).unwrap();
 
         let mut mat_file = File::create(mtl_file_path).unwrap();
-        mat_file.write(b"# OBJ EXPORTED USING pbrt_rs\n").unwrap();
+        mat_file
+            .write_all(b"# OBJ EXPORTED USING pbrt_rs\n")
+            .unwrap();
 
         export_obj(&scene_info, &mut file, &mut mat_file);
     }
