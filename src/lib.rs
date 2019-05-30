@@ -1037,6 +1037,17 @@ pub fn read_pbrt_file(
                     state.replace_matrix(matrix);
                     info!("After lookat: {:?}", state.matrix());
                 }
+                Rule::rotate => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 4 {
+                        panic!("LookAt need to have 4 floats: {:?}", values);
+                    }
+                    let angle = values[0];
+                    let axis = Vector3::new(values[1], values[2], values[3]).normalize();
+                    let matrix = state.matrix()
+                        * Matrix4::from_axis_angle(axis, Deg(angle) );
+                    state.replace_matrix(matrix);
+                }
                 Rule::named_statement => {
                     for rule_pair in inner_pair.into_inner() {
                         match rule_pair.as_rule() {
