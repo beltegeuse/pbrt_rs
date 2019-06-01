@@ -9,10 +9,10 @@ name = "pbrt_rs"
 doc = false
 
 [dependencies]
-pest = "2.0"
-pest_derive = "2.0"
-clap = "2.32"
+pest = "2.1"
+pest_derive = "2.1"
+clap = "2.33"
 env_logger = "0.6"
 log = "0.4"
-cgmath = "0.16"
-ply-rs = "0.1.1"
+cgmath = "0.17"
+ply-rs = "0.1"
