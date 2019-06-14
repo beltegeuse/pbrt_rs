@@ -139,19 +139,10 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                         }
                     }
                 };
-
-                // --- Indicies
-                if data.indices.len() % 3 != 0 {
-                    error!(
-                        "Number of vertices not multiples of 3: {}",
-                        data.indices.len()
-                    );
-                    continue;
-                }
-                for index in data.indices.chunks(3) {
-                    let i1 = index[0] as usize;
-                    let i2 = index[1] as usize;
-                    let i3 = index[2] as usize;
+                for index in &data.indices {
+                    let i1 = index.x;
+                    let i2 = index.y;
+                    let i3 = index.z;
 
                     match number_channels {
                         1 => writeln!(
@@ -423,7 +414,6 @@ fn main() {
     } else {
         env_logger::Builder::from_default_env()
             .default_format_timestamp(false)
-            .parse_filters("info")
             .init();
     }
 

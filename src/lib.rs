@@ -582,7 +582,7 @@ impl BSDF {
 /// Mesh representation
 #[derive(Debug)]
 pub struct TriMeshShape {
-    pub indices: Vec<u32>,
+    pub indices: Vec<Vector3<usize>>,
     pub points: Vec<Point3<f32>>,
     pub normals: Option<Vec<Vector3<f32>>>,
     pub uv: Option<Vec<Vector2<f32>>>,
@@ -601,9 +601,13 @@ impl Shape {
                 let indices = param
                     .remove("indices")
                     .expect("indice is required")
-                    .into_integer()
-                    .into_iter()
-                    .map(|v| v as u32)
+                    .into_integer();
+                if indices.len() % 3 != 0 {
+                    panic!("Support only 3 indices list");
+                }
+                let indices = indices
+                    .chunks(3)
+                    .map(|v| Vector3::new(v[0] as usize, v[1] as usize, v[2] as usize))
                     .collect();
                 let normals = if let Some(v) = param.remove("N") {
                     Some(v.into_vector3())
@@ -673,12 +677,12 @@ impl Shape {
                 let mut indices = Vec::new();
                 for f in face_list {
                     if f.vertex_index.len() == 3 {
-                        indices.extend(f.vertex_index.into_iter().map(|v| v as u32));
+                        indices.push(Vector3::new(f.vertex_index[0] as usize, f.vertex_index[1] as usize, f.vertex_index[2] as usize));
                     } else if f.vertex_index.len() == 4 {
                         // Quad is detected
-                        let quad_indices = f.vertex_index.into_iter().map(|v| v as u32).collect::<Vec<u32>>();
-                        indices.extend(&[quad_indices[0], quad_indices[1], quad_indices[2]]);
-                        indices.extend(&[quad_indices[2], quad_indices[3], quad_indices[0]]);
+                        let quad_indices = f.vertex_index.into_iter().map(|v| v as usize).collect::<Vec<usize>>();
+                        indices.push(Vector3::new(quad_indices[0], quad_indices[1], quad_indices[2]));
+                        indices.push(Vector3::new(quad_indices[2], quad_indices[3], quad_indices[0]));
                     } else {
 
                     }
