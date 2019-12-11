@@ -408,12 +408,13 @@ fn main() {
     if matches.is_present("debug") {
         // FIXME: add debug flag?
         env_logger::Builder::from_default_env()
-            .default_format_timestamp(false)
+            .format_timestamp(None)
             .parse_filters("debug")
             .init();
     } else {
         env_logger::Builder::from_default_env()
             .default_format_timestamp(false)
+            .parse_filters("info")
             .init();
     }
 
