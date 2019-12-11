@@ -413,7 +413,7 @@ fn main() {
             .init();
     } else {
         env_logger::Builder::from_default_env()
-            .default_format_timestamp(false)
+            .format_timestamp(None)
             .parse_filters("info")
             .init();
     }

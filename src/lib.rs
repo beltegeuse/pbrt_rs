@@ -699,10 +699,10 @@ impl Shape {
                         let quad_indices = f
                             .vertex_index
                             .into_iter()
-                            .map(|v| v as u32)
-                            .collect::<Vec<u32>>();
-                        indices.extend(&[quad_indices[0], quad_indices[1], quad_indices[2]]);
-                        indices.extend(&[quad_indices[2], quad_indices[3], quad_indices[0]]);
+                            .map(|v| v as usize)
+                            .collect::<Vec<usize>>();
+                        indices.push(Vector3::new(quad_indices[0], quad_indices[1], quad_indices[2]));
+                        indices.push(Vector3::new(quad_indices[2], quad_indices[3], quad_indices[0]));
                     } else {
                     }
                 }
