@@ -102,13 +102,13 @@ impl ply::PropertyAccess for PlyFace {
             ("vertex_indices", ply::Property::ListInt(vec)) => self.vertex_index = vec,
             ("vertex_indices", ply::Property::ListUInt(vec)) => {
                 self.vertex_index = vec![0; vec.len()];
-                for (i,v) in vec.iter().enumerate() {
+                for (i, v) in vec.iter().enumerate() {
                     self.vertex_index[i] = *v as i32;
                 }
             }
             ("vertex_indices", ply::Property::ListUChar(vec)) => {
-               self.vertex_index = vec![0; vec.len()];
-                for (i,v) in vec.iter().enumerate() {
+                self.vertex_index = vec![0; vec.len()];
+                for (i, v) in vec.iter().enumerate() {
                     self.vertex_index[i] = i32::from(*v);
                 }
             }
@@ -182,11 +182,7 @@ pub struct RGBValue {
 }
 impl RGBValue {
     pub fn color(v: f32) -> RGBValue {
-        RGBValue {
-            r: v,
-            g: v,
-            b: v,
-        }
+        RGBValue { r: v, g: v, b: v }
     }
 }
 #[derive(Debug, Clone)]
@@ -232,11 +228,13 @@ impl Param {
     }
     fn parse_rgb(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
         let (name, values) = pbrt_parameter::<f32>(pairs);
-        (name, 
-            Param::RGB( RGBValue {
-                r: values[0], g: values[1], b: values[2]
-                }
-            )
+        (
+            name,
+            Param::RGB(RGBValue {
+                r: values[0],
+                g: values[1],
+                b: values[2],
+            }),
         )
     }
 
@@ -488,10 +486,24 @@ impl BSDF {
             }
             "metal" => {
                 // TODO: Need to be able to export other material params
-                let eta =
-                    remove_default!(param, "eta", Param::RGB(RGBValue {
-                        r: 0.199_990_69, g: 0.922_084_6, b: 1.099_875_9}));
-                let k = remove_default!(param, "k", Param::RGB(RGBValue { r: 3.904_635_4, g: 2.447_633_3, b: 2.137_652_6 }));
+                let eta = remove_default!(
+                    param,
+                    "eta",
+                    Param::RGB(RGBValue {
+                        r: 0.199_990_69,
+                        g: 0.922_084_6,
+                        b: 1.099_875_9
+                    })
+                );
+                let k = remove_default!(
+                    param,
+                    "k",
+                    Param::RGB(RGBValue {
+                        r: 3.904_635_4,
+                        g: 2.447_633_3,
+                        b: 2.137_652_6
+                    })
+                );
                 let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
                 let u_roughness = param.remove("uroughness");
                 let v_roughness = param.remove("vroughness");
@@ -677,14 +689,21 @@ impl Shape {
                 let mut indices = Vec::new();
                 for f in face_list {
                     if f.vertex_index.len() == 3 {
-                        indices.push(Vector3::new(f.vertex_index[0] as usize, f.vertex_index[1] as usize, f.vertex_index[2] as usize));
+                        indices.push(Vector3::new(
+                            f.vertex_index[0] as usize,
+                            f.vertex_index[1] as usize,
+                            f.vertex_index[2] as usize,
+                        ));
                     } else if f.vertex_index.len() == 4 {
                         // Quad is detected
-                        let quad_indices = f.vertex_index.into_iter().map(|v| v as usize).collect::<Vec<usize>>();
-                        indices.push(Vector3::new(quad_indices[0], quad_indices[1], quad_indices[2]));
-                        indices.push(Vector3::new(quad_indices[2], quad_indices[3], quad_indices[0]));
+                        let quad_indices = f
+                            .vertex_index
+                            .into_iter()
+                            .map(|v| v as u32)
+                            .collect::<Vec<u32>>();
+                        indices.extend(&[quad_indices[0], quad_indices[1], quad_indices[2]]);
+                        indices.extend(&[quad_indices[2], quad_indices[3], quad_indices[0]]);
                     } else {
-
                     }
                 }
                 let normals = if vertex_list[0].has_normal {
@@ -744,7 +763,7 @@ pub struct PointLight {
 pub enum Light {
     Distant(DistantLight),
     Infinite(InfiniteLight),
-    Point(PointLight)
+    Point(PointLight),
 }
 impl Light {
     fn new(pairs: pest::iterators::Pair<Rule>) -> Option<Self> {
@@ -772,11 +791,13 @@ impl Light {
                 };
                 let luminance = if let Some(mapname) = param.remove("mapname") {
                     mapname
-                } else { luminance };
-                Some(Light::Infinite( InfiniteLight {
+                } else {
+                    luminance
+                };
+                Some(Light::Infinite(InfiniteLight {
                     luminance,
                     samples,
-                    scale
+                    scale,
                 }))
             }
             _ => {
@@ -899,6 +920,7 @@ pub struct Scene {
     pub objects: HashMap<String, Rc<ObjectInfo>>, //< shapes with objects
     pub instances: Vec<InstanceInfo>,             //< instances on the shapes
     pub lights: Vec<Light>,                       //< list of all light sources
+    pub transforms: HashMap<String, Matrix4<f32>>,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -914,6 +936,7 @@ impl Default for Scene {
             objects: HashMap::default(),
             instances: Vec::default(),
             lights: Vec::default(),
+            transforms: HashMap::default(),
         }
     }
 }
@@ -968,10 +991,10 @@ pub fn read_pbrt_file(
                     let m33 = values[15];
                     #[rustfmt::skip]
                     let matrix = Matrix4::new(
-                        m00, m01, m02, m03, 
-                        m10, m11, m12, m13, 
-                        m20, m21, m22, m23, 
-                        m30, m31, m32,m33,
+                        m00, m01, m02, m03,
+                        m10, m11, m12, m13,
+                        m20, m21, m22, m23,
+                        m30, m31, m32, m33,
                     );
                     state.replace_matrix(matrix);
                 }
@@ -999,10 +1022,10 @@ pub fn read_pbrt_file(
 
                     #[rustfmt::skip]
                     let matrix = state.matrix() * Matrix4::new(
-                        m00, m01, m02, m03, 
-                        m10, m11, m12, m13, 
-                        m20, m21, m22, m23, 
-                        m30, m31, m32,m33,
+                        m00, m01, m02, m03,
+                        m10, m11, m12, m13,
+                        m20, m21, m22, m23,
+                        m30, m31, m32, m33,
                     );
                     state.replace_matrix(matrix);
                 }
@@ -1041,6 +1064,15 @@ pub fn read_pbrt_file(
                     state.replace_matrix(matrix);
                     info!("After lookat: {:?}", state.matrix());
                 }
+                Rule::translate => {
+                    let values = pbrt_matrix(inner_pair.into_inner());
+                    if values.len() != 3 {
+                        panic!("Translate need to have 3 floats: {:?}", values);
+                    }
+                    let matrix = state.matrix()
+                        * Matrix4::from_translation(Vector3::new(values[0], values[1], values[2]));
+                    state.replace_matrix(matrix);
+                }
                 Rule::rotate => {
                     let values = pbrt_matrix(inner_pair.into_inner());
                     if values.len() != 4 {
@@ -1048,8 +1080,7 @@ pub fn read_pbrt_file(
                     }
                     let angle = values[0];
                     let axis = Vector3::new(values[1], values[2], values[3]).normalize();
-                    let matrix = state.matrix()
-                        * Matrix4::from_axis_angle(axis, Deg(angle) );
+                    let matrix = state.matrix() * Matrix4::from_axis_angle(axis, Deg(angle));
                     state.replace_matrix(matrix);
                 }
                 Rule::named_statement => {
@@ -1129,6 +1160,16 @@ pub fn read_pbrt_file(
                                     scene_info.lights.push(light);
                                 }
                             }
+                            Rule::coord_sys_transform => {
+                                let (name, _) = parse_parameters(rule_pair);
+                                state.replace_matrix(*scene_info.transforms.get(&name).unwrap());
+                            }
+                            Rule::coord_sys => {
+                                let (name, _) = parse_parameters(rule_pair);
+                                scene_info
+                                    .transforms
+                                    .insert(name, state.matrix.last().unwrap().clone());
+                            }
                             Rule::include => {
                                 let (name, _) = parse_parameters(rule_pair);
                                 info!("Include found: {}", name);
@@ -1176,6 +1217,11 @@ pub fn read_pbrt_file(
                             }
                             Rule::attribute_end | Rule::transform_end => {
                                 state.restore();
+                            }
+                            Rule::identity => {
+                                state.replace_matrix(Matrix4::from_diagonal(Vector4::new(
+                                    1.0, 1.0, 1.0, 1.0,
+                                )));
                             }
                             Rule::world_begin => {
                                 // Reinit the transformation matrix

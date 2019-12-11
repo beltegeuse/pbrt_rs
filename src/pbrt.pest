@@ -14,6 +14,7 @@ statement = { active_transform |
 named_statement = { accelerator |
                     area_light_source |
                     camera |
+                    coord_sys |
                     coord_sys_transform |
                     film |
                     integrator |
@@ -138,6 +139,8 @@ sampler = { "Sampler" ~ string ~ parameter* }
 film = { "Film" ~ string ~ parameter* }
 // Integrator "path" "integer maxdepth" 5
 integrator = { "Integrator" ~ string ~ parameter* }
+// CoordinateSystem "camera"
+coord_sys = {"CoordinateSystem" ~ string}
 // CoordSysTransform "camera"
 coord_sys_transform = { "CoordSysTransform" ~ string }
 // AreaLightSource "diffuse" "rgb L"  .5 .5 .5
@@ -162,8 +165,7 @@ shape = { "Shape" ~ string ~ parameter* }
 keyword = {
     (attribute_begin |
      attribute_end |
-     "CoordinateSystem" |
-     "Identity" |
+     identity |
      object_begin |
      object_end |
      object_instance |
@@ -174,6 +176,7 @@ keyword = {
     )
 }
 all = { "All" }
+identity = { "Identity" }
 attribute_begin = { "AttributeBegin" }
 attribute_end = { "AttributeEnd" }
 object_begin = { "ObjectBegin" ~ string }
