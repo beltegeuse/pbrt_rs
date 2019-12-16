@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+extern crate byteorder;
 extern crate cgmath;
 extern crate clap;
 extern crate env_logger;
@@ -8,6 +9,11 @@ extern crate pbrt_rs;
 extern crate log;
 
 use cgmath::*;
+use clap::{App, Arg};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::fs::File;
+use std::path::Path;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 
 pub struct Camera {
     pub img: Vector2<u32>,
@@ -90,8 +96,128 @@ impl Camera {
     }
 }
 
+#[derive(Debug)]
+pub struct Intersection {
+    pub t: f32, 
+    pub p: Option<Point3<f32>>,
+    pub n_geo: Option<Vector3<f32>>
+}
+
+impl Default for Intersection {
+    fn default() -> Self { 
+        return Self {
+            t: std::f32::MAX,
+            p: None,
+            n_geo: None
+        }
+    } 
+}
+
+fn triangle_intersection(p_c: Point3<f32>, d_c: Vector3<f32>, 
+    its: &mut Intersection,
+    v0: Vector3<f32>, v1: Vector3<f32>, v2: Vector3<f32>) -> bool {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0; 
+    let n_geo = e1.cross(e2).normalize();
+    let denom = d_c.dot(n_geo);
+    if denom == 0.0 {
+        return false;
+    }
+    // Distance for intersection
+    let t = -(p_c - v0).dot(n_geo) / denom;
+    if t < 0.0 {
+        return false;
+    }
+    let p = p_c + t * d_c;
+    let det = e1.cross(e2).magnitude();
+    let u0 = e1.cross(p.to_vec() - v0);
+    let v0 = (p.to_vec() - v0).cross(e2);
+    if u0.dot(n_geo) < 0.0 || v0.dot(n_geo) < 0.0 {
+        return false;
+    }
+    let v = u0.magnitude() / det;
+    let u = v0.magnitude() / det;
+    if u < 0.0 || v < 0.0 || u > 1.0 || v > 1.0 {
+        return false;
+    }
+    if u + v <= 1.0 {
+        if t < its.t {
+            its.t = t;
+            its.p = Some(p);
+            its.n_geo = Some(n_geo);
+            return true;
+        }
+    }
+    false
+}
+
+fn intersection(scene: &pbrt_rs::Scene, p: Point3<f32>, d: Vector3<f32>) -> Intersection {
+    let mut its = Intersection::default();
+    
+    for m in &scene.shapes {
+        // Geometric information
+        match m.data {
+            pbrt_rs::Shape::TriMesh(ref data) => {
+                // Do simple intesection
+                let mat = m.matrix;
+                let points: Vec<Vector3<f32>> = data.points
+                .iter()
+                .map(|n| mat.transform_point(n.clone()).to_vec())
+                .collect();
+                let indices = data.indices.clone();
+                
+                for i in indices {
+                    triangle_intersection(p, d, &mut its, points[i.x], points[i.y], points[i.z]);
+                }
+            }
+        }
+    }
+    
+    return its;
+} 
+
+fn save_pfm(img_size: Vector2<u32>, data: Vec<f32>, imgout_path_str: &str) {
+    let file = File::create(Path::new(imgout_path_str)).unwrap();
+    let mut file = BufWriter::new(file);
+    let header = format!("PF\n{} {}\n-1.0\n", img_size.x, img_size.y);
+    file.write_all(header.as_bytes()).unwrap();
+    for y in 0..img_size.y {
+        for x in 0..img_size.x {
+            let p = data[(y*img_size.x + x) as usize];
+            file.write_f32::<LittleEndian>(p.abs()).unwrap();
+            file.write_f32::<LittleEndian>(p.abs()).unwrap();
+            file.write_f32::<LittleEndian>(p.abs()).unwrap();
+        }
+    }
+}
+
 fn main() {
-	let scene_path_str = "/home/muliana/projects/pbrt_rs/data/pbrt_rs_scenes/Spaceship/scene.pbrt";
+    let matches = App::new("scene_parsing")
+    .version("0.0.1")
+    .author("Adrien Gruson <adrien.gruson@gmail.com>")
+    .about("A Rusty scene 3D parsing for rendering system")
+    .arg(
+        Arg::with_name("scene")
+            .required(true)
+            .takes_value(true)
+            .index(1)
+            .help("3D scene"),
+    ).arg(
+        Arg::with_name("ouput")
+            .required(true)
+            .takes_value(true)
+            .index(2)
+            .help("Output PFM"),
+    )
+    .get_matches();
+    // Get params values
+    let scene_path_str = matches
+        .value_of("scene")
+        .expect("no scene parameter provided");
+    let output_str = matches
+        .value_of("ouput")
+        .expect("no ouput parameter provided");
+
 
 	let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
@@ -129,16 +255,25 @@ fn main() {
 
 	// Render the image (depth image)
 	let image_size = scene_info.image_size;
-	let image_buffer = vec![0.0; (image_size.x * image_size.y) as usize]; 
+	let mut image_buffer = vec![0.0; (image_size.x * image_size.y) as usize]; 
 	for iy in 0..image_size.y {
 		for ix in 0..image_size.x {
-			let (p, d) = camera.generate(Point2::new(ix as f32 + 0.5, iy as f32 + 0.5));
-			
-			// TODO: Iterate on all the triangles
+            let (p, d) = camera.generate(Point2::new(ix as f32 + 0.5, iy as f32 + 0.5));
+            
+            // Compute the intersection
+            let its = intersection(&scene_info, p, d);
+            if let Some(pos) = its.p {
+                let pix_id = (iy*image_size.x + ix) as usize;
+                image_buffer[pix_id] = its.t;
+            }
 		}
-	}
+    }
+    
+    let sum_dist = image_buffer.iter().sum::<f32>();
+    let sum_dist = sum_dist / (image_size.x * image_size.y) as f32;
+    println!("Sum average is: {}", sum_dist);
 
 	// Save the image
-	// TODO: Save the image as pfm
+    save_pfm(image_size, image_buffer, output_str);
 
 }
