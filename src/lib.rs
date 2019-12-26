@@ -957,7 +957,7 @@ pub fn read_pbrt_file(
 
     let now = Instant::now();
     let pairs =
-        PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
+        PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {} for {}", e, path));
     for pair in pairs {
         let span = pair.clone().as_span();
         debug!("Rule:    {:?}", pair.as_rule());
