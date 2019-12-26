@@ -11,12 +11,14 @@ extern crate pbrt_rs;
 #[macro_use]
 extern crate log;
 
+use byteorder::{LittleEndian, WriteBytesExt};
 use cgmath::*;
 use clap::{App, Arg};
-use byteorder::{LittleEndian, WriteBytesExt};
+use rayon::prelude::*;
+use std::convert::TryInto;
 use std::fs::File;
-use std::path::Path;
 use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::sync::Mutex;
 
 // To avoid self intersection (in case)
@@ -104,35 +106,19 @@ impl Camera {
 }
 
 fn vec_min(v1: &Vector3<f32>, v2: &Vector3<f32>) -> Vector3<f32> {
-    Vector3::new(
-        v1.x.min(v2.x),
-        v1.y.min(v2.y),
-        v1.z.min(v2.z),
-    )
+    Vector3::new(v1.x.min(v2.x), v1.y.min(v2.y), v1.z.min(v2.z))
 }
 
 fn vec_max(v1: &Vector3<f32>, v2: &Vector3<f32>) -> Vector3<f32> {
-    Vector3::new(
-        v1.x.max(v2.x),
-        v1.y.max(v2.y),
-        v1.z.max(v2.z),
-    )
+    Vector3::new(v1.x.max(v2.x), v1.y.max(v2.y), v1.z.max(v2.z))
 }
 
 fn vec_div(v1: &Vector3<f32>, v2: &Vector3<f32>) -> Vector3<f32> {
-    Vector3::new(
-        v1.x / v2.x,
-        v1.y / v2.y,
-        v1.z / v2.z,
-    )
+    Vector3::new(v1.x / v2.x, v1.y / v2.y, v1.z / v2.z)
 }
 
 fn vec_mult(v1: &Vector3<f32>, v2: &Vector3<f32>) -> Vector3<f32> {
-    Vector3::new(
-        v1.x * v2.x,
-        v1.y * v2.y,
-        v1.z * v2.z,
-    )
+    Vector3::new(v1.x * v2.x, v1.y * v2.y, v1.z * v2.z)
 }
 
 fn vec_max_coords(v: Vector3<f32>) -> f32 {
@@ -165,7 +151,7 @@ impl BoundingBox {
             p_max: vec_max(&self.p_max, &b.p_max),
         }
     }
-    
+
     pub fn union_vec(&self, v: &Vector3<f32>) -> BoundingBox {
         BoundingBox {
             p_min: vec_min(&self.p_min, v),
@@ -174,7 +160,7 @@ impl BoundingBox {
     }
 
     pub fn size(&self) -> Vector3<f32> {
-        self.p_max - self.p_min 
+        self.p_max - self.p_min
     }
 
     pub fn center(&self) -> Vector3<f32> {
@@ -204,7 +190,7 @@ impl BoundingBox {
 struct Triangle {
     pub p0: Vector3<f32>,
     pub p1: Vector3<f32>,
-    pub p2: Vector3<f32>
+    pub p2: Vector3<f32>,
 }
 
 impl Triangle {
@@ -214,7 +200,7 @@ impl Triangle {
 
     fn intersection(&self, p_c: &Point3<f32>, d_c: &Vector3<f32>, its: &mut Intersection) -> bool {
         let e1 = self.p1 - self.p0;
-        let e2 = self.p2 - self.p0; 
+        let e2 = self.p2 - self.p0;
         let n_geo = e1.cross(e2).normalize();
         let denom = d_c.dot(n_geo);
         if denom == 0.0 {
@@ -238,7 +224,7 @@ impl Triangle {
             return false;
         }
         if u + v <= 1.0 {
-            // TODO: Review the condition because 
+            // TODO: Review the condition because
             //      for now it only return true
             //      if the itersection is updated
             if t < its.t {
@@ -293,17 +279,15 @@ impl BHVAccel {
         // If the tree is too deep or not enough element
         // force to make a leaf
         // depth >= 20
-        if (end - begin <= 4) {
+        if end - begin <= 4 {
             // dbg!(aabb.size());
-            self.nodes.push(
-                BVHNode {
-                    aabb,
-                    first: begin,
-                    count: end - begin, 
-                    left: None,
-                    right: None
-                }
-            );
+            self.nodes.push(BVHNode {
+                aabb,
+                first: begin,
+                count: end - begin,
+                left: None,
+                right: None,
+            });
             Some(self.nodes.len() - 1)
         } else {
             // For now cut on the biggest axis
@@ -324,33 +308,33 @@ impl BHVAccel {
 
             // Split based on largest axis (split inside the middle for now)
             // or split between triangles
-            // TODO: Implements SAH 
+            // TODO: Implements SAH
             // let split = (aabb.p_max[axis] + aabb.p_min[axis]) / 2.0;
             // let split_id = self.triangles[begin..end].iter_mut().partition_in_place(|t| t.middle()[axis] < split ) + begin;
 
-            self.triangles[begin..end].sort_unstable_by(|t1, t2| t1.middle()[axis].partial_cmp(&t2.middle()[axis]).unwrap());
+            self.triangles[begin..end].sort_unstable_by(|t1, t2| {
+                t1.middle()[axis].partial_cmp(&t2.middle()[axis]).unwrap()
+            });
             let split_id = (begin + end) / 2;
-            
-            // TODO: Make better 
+
+            // TODO: Make better
             let left = self.build(begin, split_id, depth + 1);
             let right = self.build(split_id, end, depth + 1);
-            self.nodes.push(
-                BVHNode {
-                    aabb, 
-                    first: 0, // TODO: Make the node invalid
-                    count: 0, 
-                    left,
-                    right,
-                }
-            );
+            self.nodes.push(BVHNode {
+                aabb,
+                first: 0, // TODO: Make the node invalid
+                count: 0,
+                left,
+                right,
+            });
 
             Some(self.nodes.len() - 1)
         }
     }
-    
+
     pub fn create_from_scene(scene: &pbrt_rs::Scene) -> BHVAccel {
         // TODO: No object ID is associated for now...
-    
+
         // Create the list of triangles from all the scene object
         // Note that for now, it is a simple BVH...
         let mut triangles = Vec::new();
@@ -360,12 +344,13 @@ impl BHVAccel {
                 pbrt_rs::Shape::TriMesh(ref data) => {
                     // Do simple intesection
                     let mat = m.matrix;
-                    let points: Vec<Vector3<f32>> = data.points
-                    .iter()
-                    .map(|n| mat.transform_point(n.clone()).to_vec())
-                    .collect();
+                    let points: Vec<Vector3<f32>> = data
+                        .points
+                        .iter()
+                        .map(|n| mat.transform_point(n.clone()).to_vec())
+                        .collect();
                     let indices = data.indices.clone();
-                    
+
                     for i in indices {
                         triangles.push(Triangle {
                             p0: points[i.x],
@@ -373,8 +358,7 @@ impl BHVAccel {
                             p2: points[i.z],
                         });
                     }
-                }
-                // TODO: Need to do also for the instances of the same object
+                } // TODO: Need to do also for the instances of the same object
             }
         }
 
@@ -387,12 +371,15 @@ impl BHVAccel {
         info!("BVH stats: ");
         info!(" - Number of triangles: {}", accel.triangles.len());
         info!(" - Number of nodes: {}", accel.nodes.len());
-        info!(" - AABB size root: {:?}", accel.nodes[accel.root.unwrap()].aabb.size());
+        info!(
+            " - AABB size root: {:?}",
+            accel.nodes[accel.root.unwrap()].aabb.size()
+        );
         // Check up the slides
         for n in &accel.nodes {
             if n.is_leaf() {
                 let mut aabb = BoundingBox::default();
-                for i in n.first..(n.first+n.count) {
+                for i in n.first..(n.first + n.count) {
                     aabb = aabb.union_vec(&accel.triangles[i].p0);
                     aabb = aabb.union_vec(&accel.triangles[i].p1);
                     aabb = aabb.union_vec(&accel.triangles[i].p2);
@@ -401,14 +388,14 @@ impl BHVAccel {
                 debug_assert_eq!(aabb.p_min, n.aabb.p_min);
             }
         }
-        
+
         accel
     }
 
     fn intersection(&self, p: Point3<f32>, d: Vector3<f32>) -> Intersection {
-        let mut its = Intersection::default();        
+        let mut its = Intersection::default();
         if self.root.is_none() {
-            return its; 
+            return its;
         }
 
         // Indices of nodes
@@ -422,9 +409,9 @@ impl BHVAccel {
             match (n.is_leaf(), t_aabb) {
                 (_, None) => {
                     // Nothing to do as we miss the node
-                } 
+                }
                 (true, Some(_t)) => {
-                    for i in n.first..(n.first+n.count) {
+                    for i in n.first..(n.first + n.count) {
                         self.triangles[i].intersection(&p, &d, &mut its);
                     }
                 }
@@ -444,51 +431,51 @@ impl BHVAccel {
 
 #[derive(Debug)]
 pub struct Intersection {
-    pub t: f32, 
+    pub t: f32,
     pub p: Option<Point3<f32>>,
-    pub n_geo: Option<Vector3<f32>>
+    pub n_geo: Option<Vector3<f32>>,
 }
 
 impl Default for Intersection {
-    fn default() -> Self { 
+    fn default() -> Self {
         return Self {
             t: std::f32::MAX,
             p: None,
-            n_geo: None
-        }
-    } 
+            n_geo: None,
+        };
+    }
 }
 
 fn intersection(scene: &pbrt_rs::Scene, p: Point3<f32>, d: Vector3<f32>) -> Intersection {
     let mut its = Intersection::default();
-    
+
     for m in &scene.shapes {
         // Geometric information
         match m.data {
             pbrt_rs::Shape::TriMesh(ref data) => {
                 // Do simple intesection
                 let mat = m.matrix;
-                let points: Vec<Vector3<f32>> = data.points
-                .iter()
-                .map(|n| mat.transform_point(n.clone()).to_vec())
-                .collect();
+                let points: Vec<Vector3<f32>> = data
+                    .points
+                    .iter()
+                    .map(|n| mat.transform_point(n.clone()).to_vec())
+                    .collect();
                 let indices = data.indices.clone();
-                
+
                 for i in indices {
                     let t = Triangle {
-                       p0: points[i.x], 
-                       p1: points[i.y], 
-                       p2: points[i.z],
+                        p0: points[i.x],
+                        p1: points[i.y],
+                        p2: points[i.z],
                     };
                     t.intersection(&p, &d, &mut its);
                 }
-            }
-            // TODO: Need to do also for the instances of the same object
+            } // TODO: Need to do also for the instances of the same object
         }
     }
-    
+
     return its;
-} 
+}
 
 fn save_pfm(img_size: Vector2<u32>, data: Vec<f32>, imgout_path_str: &str) {
     let file = File::create(Path::new(imgout_path_str)).unwrap();
@@ -497,7 +484,9 @@ fn save_pfm(img_size: Vector2<u32>, data: Vec<f32>, imgout_path_str: &str) {
     file.write_all(header.as_bytes()).unwrap();
     for y in 0..img_size.y {
         for x in 0..img_size.x {
-            let p = data[(y*img_size.x + x) as usize];
+            // Flip vertically
+            let id: usize = ((img_size.y - y - 1) * img_size.x + x).try_into().unwrap();
+            let p = data[id];
             file.write_f32::<LittleEndian>(p.abs()).unwrap();
             file.write_f32::<LittleEndian>(p.abs()).unwrap();
             file.write_f32::<LittleEndian>(p.abs()).unwrap();
@@ -507,23 +496,24 @@ fn save_pfm(img_size: Vector2<u32>, data: Vec<f32>, imgout_path_str: &str) {
 
 fn main() {
     let matches = App::new("scene_parsing")
-    .version("0.0.1")
-    .author("Adrien Gruson <adrien.gruson@gmail.com>")
-    .about("A Rusty scene 3D parsing for rendering system")
-    .arg(
-        Arg::with_name("scene")
-            .required(true)
-            .takes_value(true)
-            .index(1)
-            .help("3D scene"),
-    ).arg(
-        Arg::with_name("ouput")
-            .required(true)
-            .takes_value(true)
-            .index(2)
-            .help("Output PFM"),
-    )
-    .get_matches();
+        .version("0.0.1")
+        .author("Adrien Gruson <adrien.gruson@gmail.com>")
+        .about("A Rusty scene 3D parsing for rendering system")
+        .arg(
+            Arg::with_name("scene")
+                .required(true)
+                .takes_value(true)
+                .index(1)
+                .help("3D scene"),
+        )
+        .arg(
+            Arg::with_name("ouput")
+                .required(true)
+                .takes_value(true)
+                .index(2)
+                .help("Output PFM"),
+        )
+        .get_matches();
     // Get params values
     let scene_path_str = matches
         .value_of("scene")
@@ -532,41 +522,39 @@ fn main() {
         .value_of("ouput")
         .expect("no ouput parameter provided");
 
-
-	let mut scene_info = pbrt_rs::Scene::default();
+    let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
     let working_dir = std::path::Path::new(scene_path_str).parent().unwrap();
-	pbrt_rs::read_pbrt_file(scene_path_str, &working_dir, &mut scene_info, &mut state);
-	
-	// For logging
-	env_logger::Builder::from_default_env()
-            .format_timestamp(None)
-            .parse_filters("info")
-            .init();
+    pbrt_rs::read_pbrt_file(scene_path_str, &working_dir, &mut scene_info, &mut state);
 
-	// Print statistics
-	info!("Scenes info: ");
-	info!(" - BSDFS: {}", scene_info.materials.len());
-	info!(" - Objects: ");
-	info!("    * Unamed object: {}", scene_info.shapes.len());
-	info!("    * Object: {}", scene_info.objects.len());
-	info!("    * Object's instance: {}", scene_info.instances.len()); 
+    // For logging
+    env_logger::Builder::from_default_env()
+        .format_timestamp(None)
+        .parse_filters("info")
+        .init();
 
-	// Load the camera information from PBRT
-	let camera = {
-		if let Some(camera) = scene_info.cameras.get(0) {
-			match camera {
-				pbrt_rs::Camera::Perspective(ref cam) => {
-					let mat = cam.world_to_camera.inverse_transform().unwrap();
-					info!("camera matrix: {:?}", mat);
-					Camera::new(scene_info.image_size, cam.fov, mat)
-				}
-			}
-		} else {
-			panic!("The camera is not set!");
-		}
-	};
+    // Print statistics
+    info!("Scenes info: ");
+    info!(" - BSDFS: {}", scene_info.materials.len());
+    info!(" - Objects: ");
+    info!("    * Unamed object: {}", scene_info.shapes.len());
+    info!("    * Object: {}", scene_info.objects.len());
+    info!("    * Object's instance: {}", scene_info.instances.len());
 
+    // Load the camera information from PBRT
+    let camera = {
+        if let Some(camera) = scene_info.cameras.get(0) {
+            match camera {
+                pbrt_rs::Camera::Perspective(ref cam) => {
+                    let mat = cam.world_to_camera.inverse_transform().unwrap();
+                    info!("camera matrix: {:?}", mat);
+                    Camera::new(scene_info.image_size, cam.fov, mat)
+                }
+            }
+        } else {
+            panic!("The camera is not set!");
+        }
+    };
 
     // Construct the acceleration data structure
     info!("Build acceleration data structure ... ");
@@ -574,37 +562,39 @@ fn main() {
     let accel = BHVAccel::create_from_scene(&scene_info);
     info!("Done {} ms", start.elapsed().as_millis());
 
-	// Render the image (depth image)
-	let image_size = scene_info.image_size;
-    let mut image_buffer = vec![0.0; (image_size.x * image_size.y) as usize]; 
+    // Render the image (depth image)
+    let image_size = scene_info.image_size;
+    let image_buffer = Mutex::new(vec![0.0; (image_size.x * image_size.y) as usize]);
     let progress_bar = Mutex::new(pbr::ProgressBar::new(image_size.y as u64));
 
     let start = std::time::Instant::now();
-	for iy in 0..image_size.y {
-		for ix in 0..image_size.x {
+    (0..image_size.y).into_par_iter().for_each(|iy| {
+        let mut image_line = vec![0.0; image_size.x as usize];
+        for ix in 0..image_size.x {
             let (p, d) = camera.generate(Point2::new(ix as f32 + 0.5, iy as f32 + 0.5));
-            
+
             // Compute the intersection
             let its = accel.intersection(p, d);
             //let its = intersection(&scene_info, p, d);
-            if let Some(pos) = its.p {
-                let pix_id = (iy*image_size.x + ix) as usize;
-                image_buffer[pix_id] = its.t;
+            if let Some(_pos) = its.p {
+                image_line[ix as usize] = its.t;
             }
-		}
+        }
 
         {
+            let beg = (iy * image_size.x) as usize;
+            let end = beg + image_size.x as usize;
+            image_buffer.lock().unwrap()[beg..end].copy_from_slice(&image_line);
             progress_bar.lock().unwrap().inc();
         }
-    }
+    });
     info!("Done {} ms", start.elapsed().as_millis());
 
-
+    let image_buffer = image_buffer.into_inner().unwrap();
     let sum_dist = image_buffer.iter().sum::<f32>();
     let sum_dist = sum_dist / (image_size.x * image_size.y) as f32;
     println!("Sum average is: {}", sum_dist);
 
-	// Save the image
+    // Save the image
     save_pfm(image_size, image_buffer, output_str);
-
 }
