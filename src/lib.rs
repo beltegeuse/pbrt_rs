@@ -1116,6 +1116,7 @@ pub fn read_pbrt_file(
                                     );
                                     scene_info.number_unamed_materials += 1;
                                     scene_info.materials.insert(name.to_string(), mat);
+                                    state.set_named_matrial(name);
                                 }
                             }
                             Rule::shape => {
