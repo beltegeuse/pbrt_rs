@@ -951,9 +951,22 @@ pub fn read_pbrt_file(
     info!("Loading: {}", path);
     let file = std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
     let mut reader = std::io::BufReader::new(file);
-    let mut str_buf: String = String::default();
-    let _num_bytes = reader.read_to_string(&mut str_buf);
+    let mut str_buf_other: String = String::default();
+    let _num_bytes = reader.read_to_string(&mut str_buf_other);
     info!("Time for reading file: {:?}", Instant::now() - now);
+
+    // Remove all # comments or lines
+    // indeed, there is a problem for now to handle these cases
+    // TODO: This is not super clean, but this solution is much easier than previous one
+    //      coded inside pest.
+    let mut str_buf = String::with_capacity(str_buf_other.len());
+    for l in str_buf_other.lines() {
+        match l.find("#") {
+            Some(idx) => str_buf.push_str(&l[..idx]),
+            None => str_buf.push_str(l),
+        }
+        str_buf.push('\n');
+    }
 
     let now = Instant::now();
     let pairs =

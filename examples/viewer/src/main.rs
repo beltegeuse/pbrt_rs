@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 // For the BVH tree
-#![feature(iter_partition_in_place)]
+//#![feature(iter_partition_in_place)]
 
 extern crate byteorder;
 extern crate cgmath;
