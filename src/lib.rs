@@ -941,6 +941,28 @@ impl Default for Scene {
     }
 }
 
+// Function to remove # inside the pbrt file
+// note some care is required if the names containts #
+fn remove_comment(line: std::str::Chars) -> Option<usize> {
+    let mut inside_name = false;
+    for (idx, c) in line.enumerate() {
+        match c {
+            '#' => {
+                if inside_name {
+                    // Continue
+                } else {
+                    return Some(idx)
+                }
+            }
+            '"' => {
+                inside_name = !inside_name;
+            }
+            _ => {}
+        } 
+    }
+    None
+}
+
 pub fn read_pbrt_file(
     path: &str,
     working_dir: &std::path::Path,
@@ -957,17 +979,15 @@ pub fn read_pbrt_file(
 
     // Remove all # comments or lines
     // indeed, there is a problem for now to handle these cases
-    // TODO: This is not super clean, but this solution is much easier than previous one
-    //      coded inside pest.
     let mut str_buf = String::with_capacity(str_buf_other.len());
     for l in str_buf_other.lines() {
-        match l.find("#") {
+        match remove_comment(l.chars()) {
             Some(idx) => str_buf.push_str(&l[..idx]),
             None => str_buf.push_str(l),
         }
         str_buf.push('\n');
     }
-
+    
     let now = Instant::now();
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {} for {}", e, path));

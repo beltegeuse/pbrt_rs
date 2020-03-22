@@ -13,12 +13,6 @@ fn create_file_and_parse(content: &str) -> pbrt_rs::Scene {
     let path = file.path();
     let working_dir = path.parent().unwrap();
 
-    env_logger::Builder::from_default_env()
-            .format_timestamp(None)
-            .parse_filters("info")
-            .is_test(true)
-            .init();
-
     pbrt_rs::read_pbrt_file(path.to_str().unwrap(), &working_dir, &mut scene_info, &mut state);
 
     scene_info
@@ -31,18 +25,12 @@ fn sphere() {
     "#);
 
     // FIXME: Write acutal test
+    //  by testing the right parsing
 }
 
 #[test]
-fn multiline() {
-    let scene = create_file_and_parse(r#"
-    ### Object: Puerta Arco Grande Vidrio ### 
-    MakeNamedMaterial "Vidrio" 
-             "string type" ["glass"] 
-             "color Kr" [1.0 1.0 1.0] "color Kt" [1.0 1.0 1.0] "float index" [1.5] 
-    
-    ### End Object: Puerta Arco Grande Vidrio ### 
-    
+fn name_with_sharp() {
+    let scene_with_sharp = create_file_and_parse(r#"   
     ### Object: Jardinera 1 ### 
     Texture "Map #594" "color" "imagemap"
              "string mapping" "uv"
