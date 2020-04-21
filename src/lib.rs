@@ -608,14 +608,14 @@ impl Shape {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "trianglemesh" => {
-                let points = param.remove("P").expect("P is required").into_vector3();
+                let points = param.remove("P").expect(&format!("P is required {:?}",param)).into_vector3();
                 let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
                 let indices = param
                     .remove("indices")
-                    .expect("indice is required")
+                    .expect(&format!("indice is required {:?}",param))
                     .into_integer();
                 if indices.len() % 3 != 0 {
-                    panic!("Support only 3 indices list");
+                    panic!("Support only 3 indices list {:?}", param);
                 }
                 let indices = indices
                     .chunks(3)
