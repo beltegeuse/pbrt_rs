@@ -13,7 +13,7 @@ fn create_file_and_parse(content: &str) -> pbrt_rs::Scene {
     let path = file.path();
     let working_dir = path.parent().unwrap();
 
-    pbrt_rs::read_pbrt_file(path.to_str().unwrap(), &working_dir, &mut scene_info, &mut state);
+    pbrt_rs::read_pbrt_file(path.to_str().unwrap(), Some(&working_dir), &mut scene_info, &mut state);
 
     scene_info
 }

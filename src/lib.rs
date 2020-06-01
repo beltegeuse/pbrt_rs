@@ -604,7 +604,7 @@ pub enum Shape {
     TriMesh(TriMeshShape),
 }
 impl Shape {
-    fn new(pairs: pest::iterators::Pair<Rule>, wk: &std::path::Path) -> Option<(String, Self)> {
+    fn new(pairs: pest::iterators::Pair<Rule>, wk: Option<&std::path::Path>) -> Option<(String, Self)> {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "trianglemesh" => {
@@ -647,6 +647,10 @@ impl Shape {
                 ))
             }
             "plymesh" => {
+                let wk = match wk {
+                    None => panic!("Plymesh is not supported without wk specified"),
+                    Some(ref v) => v,
+                };
                 let filename = param
                     .remove("filename")
                     .expect("filename is required")
@@ -963,24 +967,16 @@ fn remove_comment(line: std::str::Chars) -> Option<usize> {
     None
 }
 
-pub fn read_pbrt_file(
-    path: &str,
-    working_dir: &std::path::Path,
+pub fn read_pbrt(
+    scene_string: &String,
+    working_dir: Option<&std::path::Path>,
     scene_info: &mut Scene,
     state: &mut State,
 ) {
-    let now = Instant::now();
-    info!("Loading: {}", path);
-    let file = std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
-    let mut reader = std::io::BufReader::new(file);
-    let mut str_buf_other: String = String::default();
-    let _num_bytes = reader.read_to_string(&mut str_buf_other);
-    info!("Time for reading file: {:?}", Instant::now() - now);
-
     // Remove all # comments or lines
     // indeed, there is a problem for now to handle these cases
-    let mut str_buf = String::with_capacity(str_buf_other.len());
-    for l in str_buf_other.lines() {
+    let mut str_buf = String::with_capacity(scene_string.len());
+    for l in scene_string.lines() {
         match remove_comment(l.chars()) {
             Some(idx) => str_buf.push_str(&l[..idx]),
             None => str_buf.push_str(l),
@@ -988,9 +984,9 @@ pub fn read_pbrt_file(
         str_buf.push('\n');
     }
     
-    let now = Instant::now();
+    // let now = Instant::now();
     let pairs =
-        PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {} for {}", e, path));
+        PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
     for pair in pairs {
         let span = pair.clone().as_span();
         debug!("Rule:    {:?}", pair.as_rule());
@@ -1128,9 +1124,15 @@ pub fn read_pbrt_file(
                                 }
                             }
                             Rule::texture => {
-                                if let Some((name, mat)) = Texture::new(rule_pair, working_dir) {
-                                    scene_info.textures.insert(name, mat);
+                                match working_dir {
+                                    None => panic!("No working dir is provided, Texture are not supported"),
+                                    Some(ref wk) => {
+                                        if let Some((name, mat)) = Texture::new(rule_pair, wk) {
+                                            scene_info.textures.insert(name, mat);
+                                        }
+                                    }
                                 }
+                                
                             }
                             Rule::make_named_material => {
                                 if let Some((name, mat)) = BSDF::new(rule_pair, false) {
@@ -1153,7 +1155,7 @@ pub fn read_pbrt_file(
                                 }
                             }
                             Rule::shape => {
-                                if let Some((_name, shape)) = Shape::new(rule_pair, &working_dir) {
+                                if let Some((_name, shape)) = Shape::new(rule_pair, working_dir) {
                                     let mut shape = ShapeInfo::new(shape, state.matrix());
                                     shape.material_name = state.named_material();
                                     shape.emission = state.emission();
@@ -1205,15 +1207,20 @@ pub fn read_pbrt_file(
                                     .insert(name, state.matrix.last().unwrap().clone());
                             }
                             Rule::include => {
-                                let (name, _) = parse_parameters(rule_pair);
-                                info!("Include found: {}", name);
-                                let filename = working_dir.join(name);
-                                read_pbrt_file(
-                                    filename.to_str().unwrap(),
-                                    working_dir,
-                                    scene_info,
-                                    state,
-                                );
+                                match working_dir {
+                                    None => panic!("No working dir is provided, Texture are not supported"),
+                                    Some(ref wk) => {
+                                        let (name, _) = parse_parameters(rule_pair);
+                                        info!("Include found: {}", name);
+                                        let filename = wk.join(name);
+                                        read_pbrt_file(
+                                            filename.to_str().unwrap(),
+                                            working_dir,
+                                            scene_info,
+                                            state,
+                                        );
+                                    }
+                                };
                             }
                             _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
                         }
@@ -1269,5 +1276,24 @@ pub fn read_pbrt_file(
             }
         }
     }
-    info!("Time for parsing file: {:?}", Instant::now() - now);
+    // info!("Time for parsing file: {:?}", Instant::now() - now);
+}
+
+/**
+ * Main method to read a PBRT file
+ */
+pub fn read_pbrt_file(
+    path: &str,
+    working_dir: Option<&std::path::Path>,
+    scene_info: &mut Scene,
+    state: &mut State,
+) {
+    let now = Instant::now();
+    info!("Loading: {}", path);
+    let file = std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
+    let mut reader = std::io::BufReader::new(file);
+    let mut str_buf_other: String = String::default();
+    let _num_bytes = reader.read_to_string(&mut str_buf_other);
+    info!("Time for reading file: {:?}", Instant::now() - now);
+    read_pbrt(&str_buf_other, working_dir, scene_info, state);
 }
