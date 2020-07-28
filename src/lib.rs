@@ -552,8 +552,8 @@ impl BSDF {
             "glass" => {
                 let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
                 let kt = remove_default!(param, "Kt", Param::RGB(RGBValue::color(1.0)));
-                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
-                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
+                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.0]));
+                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.0]));
                 let bumpmap = param.remove("bumpmap");
                 let remap_roughness =
                     remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
