@@ -15,7 +15,7 @@ use std::path::Path;
 /*
  Export PBRT files to Obj
 */
-fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File) {
+fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) {
     let normalize_rgb = |rgb: &mut pbrt_rs::RGBValue| {
         let max = rgb.r.max(rgb.b.max(rgb.g));
         if max > 1.0 {
@@ -36,13 +36,13 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
     };
     let emission_mat = |id_light: u32,
                         shape_name: String,
-                        shape: &pbrt_rs::ShapeInfo,
+                        shape_emission: &Option<pbrt_rs::Param>,
                         f_obj: &mut File,
                         f_mat: &mut File| {
         info!("Exporting emission:");
         info!(" - shape_name: {}", shape_name);
 
-        match shape.emission {
+        match shape_emission {
             Some(pbrt_rs::Param::RGB(ref rgb)) => {
                 info!(" - emission: [{}, {}, {}]", rgb.r, rgb.g, rgb.b);
                 writeln!(f_obj, "usemtl light_{}", id_light).unwrap();
@@ -74,24 +74,28 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
     let mut offset_normal = 1;
     let mut offset_uv = 1;
     let mut nb_light = 0;
-    for (i, shape) in scene_info.shapes.iter().enumerate() {
+    for (i, shape) in scene_info.shapes.into_iter().enumerate() {
         let material_name = shape.material_name.clone();
+        let shape_emission = shape.emission;
         match shape.data {
-            pbrt_rs::Shape::TriMesh(ref data) => {
+            pbrt_rs::Shape::TriMesh {
+                indices,
+                points,
+                uv,
+                normals,
+            } => {
                 // Load the relevent data and make the transformation
                 let mat = shape.matrix;
-                let uv = if let Some(uv) = data.uv.clone() {
-                    uv
-                } else {
-                    vec![]
-                };
-                let normals = match data.normals {
-                    Some(ref v) => v.iter().map(|n| mat.transform_vector(n.clone())).collect(),
+                let uv = if let Some(uv) = uv { uv } else { vec![] };
+                let normals = match normals {
+                    Some(ref v) => v
+                        .into_iter()
+                        .map(|n| mat.transform_vector(n.clone()))
+                        .collect(),
                     None => Vec::new(),
                 };
-                let points = data
-                    .points
-                    .iter()
+                let points = points
+                    .into_iter()
                     .map(|n| mat.transform_point(n.clone()))
                     .collect::<Vec<Point3<f32>>>();
 
@@ -122,24 +126,36 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 // --- Write material
                 match material_name {
                     None => {
-                        if shape.emission.is_none() {
+                        if shape_emission.is_none() {
                             writeln!(file, "usemtl export_default").unwrap();
                         } else {
-                            emission_mat(nb_light, format!("Unamed_{}", i), &shape, file, mat_file);
+                            emission_mat(
+                                nb_light,
+                                format!("Unamed_{}", i),
+                                &shape_emission,
+                                file,
+                                mat_file,
+                            );
                             nb_light += 1;
                         }
                     }
                     Some(ref m) => {
-                        if shape.emission.is_none() {
+                        if shape_emission.is_none() {
                             writeln!(file, "usemtl {}", m).unwrap();
                         } else {
                             warn!("Overwrite materials as it is a light");
-                            emission_mat(nb_light, format!("Unamed_{}", i), &shape, file, mat_file);
+                            emission_mat(
+                                nb_light,
+                                format!("Unamed_{}", i),
+                                &shape_emission,
+                                file,
+                                mat_file,
+                            );
                             nb_light += 1;
                         }
                     }
                 };
-                for index in &data.indices {
+                for index in indices {
                     let i1 = index.x;
                     let i2 = index.y;
                     let i3 = index.z;
@@ -202,6 +218,7 @@ fn export_obj(scene_info: &pbrt_rs::Scene, file: &mut File, mat_file: &mut File)
                 offset_normal += normals.len();
                 offset_uv += uv.len();
             }
+            _ => panic!("All meshes need to be converted to trimesh!"),
         }
     } // End shapes
 
@@ -422,7 +439,23 @@ fn main() {
     let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
     let working_dir = std::path::Path::new(scene_path_str).parent().unwrap();
-    pbrt_rs::read_pbrt_file(scene_path_str, Some(&working_dir), &mut scene_info, &mut state);
+    pbrt_rs::read_pbrt_file(
+        scene_path_str,
+        Some(&working_dir),
+        &mut scene_info,
+        &mut state,
+    );
+
+    // Then do some transformation
+    // if it is necessary
+    for s in &mut scene_info.shapes {
+        match &mut s.data {
+            pbrt_rs::Shape::Ply { filename, .. } => {
+                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename)).to_trimesh();
+            }
+            _ => (),
+        }
+    }
 
     // Print statistics
     info!("Scenes info: ");
@@ -435,15 +468,17 @@ fn main() {
     let tri_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.data {
-            pbrt_rs::Shape::TriMesh(ref v) => v.points.len(),
+        .map(|v| match &v.data {
+            pbrt_rs::Shape::TriMesh { points, .. } => points.len(),
+            _ => panic!("All mesh need to be converted or drop"),
         })
         .sum();
     let indices_sum: usize = scene_info
         .shapes
         .iter()
-        .map(|v| match v.data {
-            pbrt_rs::Shape::TriMesh(ref v) => v.indices.len() / 3,
+        .map(|v| match &v.data {
+            pbrt_rs::Shape::TriMesh { indices, .. } => indices.len() / 3,
+            _ => panic!("All mesh need to be converted or drop"),
         })
         .sum();
     info!("Total: ");
@@ -468,6 +503,6 @@ fn main() {
             .write_all(b"# OBJ EXPORTED USING pbrt_rs\n")
             .unwrap();
 
-        export_obj(&scene_info, &mut file, &mut mat_file);
+        export_obj(scene_info, &mut file, &mut mat_file);
     }
 }

@@ -340,17 +340,16 @@ impl BHVAccel {
         let mut triangles = Vec::new();
         for m in &scene.shapes {
             // Geometric information
-            match m.data {
-                pbrt_rs::Shape::TriMesh(ref data) => {
+            match &m.data {
+                pbrt_rs::Shape::TriMesh {
+                    points, indices, ..
+                } => {
                     // Do simple intesection
                     let mat = m.matrix;
-                    let points: Vec<Vector3<f32>> = data
-                        .points
+                    let points = points
                         .iter()
                         .map(|n| mat.transform_point(n.clone()).to_vec())
-                        .collect();
-                    let indices = data.indices.clone();
-
+                        .collect::<Vec<_>>();
                     for i in indices {
                         triangles.push(Triangle {
                             p0: points[i.x],
@@ -358,7 +357,8 @@ impl BHVAccel {
                             p2: points[i.z],
                         });
                     }
-                } // TODO: Need to do also for the instances of the same object
+                }
+                _ => panic!("Convert to trimesh before"),
             }
         }
 
@@ -451,17 +451,16 @@ fn intersection(scene: &pbrt_rs::Scene, p: Point3<f32>, d: Vector3<f32>) -> Inte
 
     for m in &scene.shapes {
         // Geometric information
-        match m.data {
-            pbrt_rs::Shape::TriMesh(ref data) => {
+        match &m.data {
+            pbrt_rs::Shape::TriMesh {
+                points, indices, ..
+            } => {
                 // Do simple intesection
                 let mat = m.matrix;
-                let points: Vec<Vector3<f32>> = data
-                    .points
+                let points: Vec<Vector3<f32>> = points
                     .iter()
                     .map(|n| mat.transform_point(n.clone()).to_vec())
                     .collect();
-                let indices = data.indices.clone();
-
                 for i in indices {
                     let t = Triangle {
                         p0: points[i.x],
@@ -470,7 +469,8 @@ fn intersection(scene: &pbrt_rs::Scene, p: Point3<f32>, d: Vector3<f32>) -> Inte
                     };
                     t.intersection(&p, &d, &mut its);
                 }
-            } // TODO: Need to do also for the instances of the same object
+            }
+            _ => panic!("Convert to trimesh before"),
         }
     }
 
@@ -525,7 +525,23 @@ fn main() {
     let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
     let working_dir = std::path::Path::new(scene_path_str).parent().unwrap();
-    pbrt_rs::read_pbrt_file(scene_path_str, Some(&working_dir), &mut scene_info, &mut state);
+    pbrt_rs::read_pbrt_file(
+        scene_path_str,
+        Some(&working_dir),
+        &mut scene_info,
+        &mut state,
+    );
+
+    // Then do some transformation
+    // if it is necessary
+    for s in &mut scene_info.shapes {
+        match &mut s.data {
+            pbrt_rs::Shape::Ply { filename, .. } => {
+                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename)).to_trimesh();
+            }
+            _ => (),
+        }
+    }
 
     // For logging
     env_logger::Builder::from_default_env()

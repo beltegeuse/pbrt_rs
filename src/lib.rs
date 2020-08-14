@@ -16,8 +16,6 @@ extern crate ply_rs;
 // parser
 use cgmath::*;
 use pest::Parser;
-use ply_rs::parser;
-use ply_rs::ply;
 use std::collections::HashMap;
 use std::io::Read;
 use std::rc::Rc;
@@ -86,90 +84,6 @@ where
         }
     }
     (name, values)
-}
-
-struct PlyFace {
-    vertex_index: Vec<i32>,
-}
-impl ply::PropertyAccess for PlyFace {
-    fn new() -> Self {
-        PlyFace {
-            vertex_index: Vec::new(),
-        }
-    }
-    fn set_property(&mut self, key: String, property: ply::Property) {
-        match (key.as_ref(), property) {
-            ("vertex_indices", ply::Property::ListInt(vec)) => self.vertex_index = vec,
-            ("vertex_indices", ply::Property::ListUInt(vec)) => {
-                self.vertex_index = vec![0; vec.len()];
-                for (i, v) in vec.iter().enumerate() {
-                    self.vertex_index[i] = *v as i32;
-                }
-            }
-            ("vertex_indices", ply::Property::ListUChar(vec)) => {
-                self.vertex_index = vec![0; vec.len()];
-                for (i, v) in vec.iter().enumerate() {
-                    self.vertex_index[i] = i32::from(*v);
-                }
-            }
-            (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
-        }
-    }
-}
-struct PlyVertex {
-    pos: Vector3<f32>,
-    normal: Vector3<f32>,
-    uv: Vector2<f32>,
-    has_normal: bool,
-    has_uv: bool,
-}
-impl ply::PropertyAccess for PlyVertex {
-    fn new() -> Self {
-        PlyVertex {
-            pos: Vector3::new(0.0, 0.0, 0.0),
-            normal: Vector3::new(0.0, 0.0, 0.0),
-            uv: Vector2::new(0.0, 0.0),
-            has_normal: false,
-            has_uv: false,
-        }
-    }
-
-    fn set_property(&mut self, key: String, property: ply::Property) {
-        match (key.as_ref(), property) {
-            ("x", ply::Property::Float(v)) => self.pos.x = v,
-            ("y", ply::Property::Float(v)) => self.pos.y = v,
-            ("z", ply::Property::Float(v)) => self.pos.z = v,
-            ("nx", ply::Property::Float(v)) => {
-                self.has_normal = true;
-                self.normal.x = v
-            }
-            ("ny", ply::Property::Float(v)) => {
-                self.has_normal = true;
-                self.normal.y = v
-            }
-            ("nz", ply::Property::Float(v)) => {
-                self.has_normal = true;
-                self.normal.z = v
-            }
-            ("u", ply::Property::Float(v)) => {
-                self.has_uv = true;
-                self.uv.x = v
-            }
-            ("v", ply::Property::Float(v)) => {
-                self.has_uv = true;
-                self.uv.y = v
-            }
-            ("s", ply::Property::Float(v)) => {
-                self.has_uv = true;
-                self.uv.x = v
-            }
-            ("t", ply::Property::Float(v)) => {
-                self.has_uv = true;
-                self.uv.y = v
-            }
-            (k, _) => panic!("Face: Unexpected key/value combination: key: {}", k),
-        }
-    }
 }
 
 /// Intermediate representation
@@ -395,6 +309,7 @@ impl Camera {
 }
 
 //// Texture representation
+#[derive(Debug)]
 pub struct Texture {
     pub filename: String,
     pub trilinear: bool,
@@ -593,26 +508,35 @@ impl BSDF {
 
 /// Mesh representation
 #[derive(Debug)]
-pub struct TriMeshShape {
-    pub indices: Vec<Vector3<usize>>,
-    pub points: Vec<Point3<f32>>,
-    pub normals: Option<Vec<Vector3<f32>>>,
-    pub uv: Option<Vec<Vector2<f32>>>,
-}
-#[derive(Debug)]
 pub enum Shape {
-    TriMesh(TriMeshShape),
+    TriMesh {
+        indices: Vec<Vector3<usize>>,
+        points: Vec<Point3<f32>>,
+        normals: Option<Vec<Vector3<f32>>>,
+        uv: Option<Vec<Vector2<f32>>>,
+    },
+    Ply {
+        filename: String,
+        alpha: Option<Texture>,
+        shadowalpha: Option<Texture>,
+    },
 }
 impl Shape {
-    fn new(pairs: pest::iterators::Pair<Rule>, wk: Option<&std::path::Path>) -> Option<(String, Self)> {
+    fn new(
+        pairs: pest::iterators::Pair<Rule>,
+        wk: Option<&std::path::Path>,
+    ) -> Option<(String, Self)> {
         let (name, mut param) = parse_parameters(pairs);
         match name.as_ref() {
             "trianglemesh" => {
-                let points = param.remove("P").expect(&format!("P is required {:?}",param)).into_vector3();
+                let points = param
+                    .remove("P")
+                    .expect(&format!("P is required {:?}", param))
+                    .into_vector3();
                 let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
                 let indices = param
                     .remove("indices")
-                    .expect(&format!("indice is required {:?}",param))
+                    .expect(&format!("indice is required {:?}", param))
                     .into_integer();
                 if indices.len() % 3 != 0 {
                     panic!("Support only 3 indices list {:?}", param);
@@ -638,12 +562,12 @@ impl Shape {
                 };
                 Some((
                     name,
-                    Shape::TriMesh(TriMeshShape {
+                    Shape::TriMesh {
                         indices,
                         points,
                         normals,
                         uv,
-                    }),
+                    },
                 ))
             }
             "plymesh" => {
@@ -655,84 +579,14 @@ impl Shape {
                     .remove("filename")
                     .expect("filename is required")
                     .into_name();
-                info!("Reading {} ...", filename);
-                let filename = wk.join(filename);
-                let f = match std::fs::File::open(filename.clone()) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        panic!("Error in opening: {:?} [wk: {:?}] => {:?}", filename, wk, e);
-                    }
-                };
-                let mut f = std::io::BufReader::new(f);
-                // create parsers
-                let vertex_parser = parser::Parser::<PlyVertex>::new();
-                let face_parser = parser::Parser::<PlyFace>::new();
-                // read the header
-                let header = vertex_parser.read_header(&mut f).unwrap();
-                // TODO: Safely unwrap
-                let mut vertex_list = Vec::new();
-                let mut face_list = Vec::new();
-                for (_ignore_key, element) in &header.elements {
-                    // we could also just parse them in sequence, but the file format might change
-                    match element.name.as_ref() {
-                        "vertex" => {
-                            vertex_list = vertex_parser
-                                .read_payload_for_element(&mut f, &element, &header)
-                                .unwrap();
-                        }
-                        "face" => {
-                            face_list = face_parser
-                                .read_payload_for_element(&mut f, &element, &header)
-                                .unwrap();
-                        }
-                        _ => panic!("Unexpeced element!"),
-                    }
-                }
-                info!(" - #vertex: {}", vertex_list.len());
-                info!(" - #face: {}", face_list.len());
-                let mut indices = Vec::new();
-                for f in face_list {
-                    if f.vertex_index.len() == 3 {
-                        indices.push(Vector3::new(
-                            f.vertex_index[0] as usize,
-                            f.vertex_index[1] as usize,
-                            f.vertex_index[2] as usize,
-                        ));
-                    } else if f.vertex_index.len() == 4 {
-                        // Quad is detected
-                        let quad_indices = f
-                            .vertex_index
-                            .into_iter()
-                            .map(|v| v as usize)
-                            .collect::<Vec<usize>>();
-                        indices.push(Vector3::new(quad_indices[0], quad_indices[1], quad_indices[2]));
-                        indices.push(Vector3::new(quad_indices[2], quad_indices[3], quad_indices[0]));
-                    } else {
-                    }
-                }
-                let normals = if vertex_list[0].has_normal {
-                    Some(vertex_list.iter().map(|v| v.normal).collect())
-                } else {
-                    None
-                };
-                let uv = if vertex_list[0].has_uv {
-                    Some(vertex_list.iter().map(|v| v.uv).collect())
-                } else {
-                    None
-                };
-                let vertex_list = vertex_list
-                    .into_iter()
-                    .map(|v| Point3::from_vec(v.pos))
-                    .collect();
-
+                let filename = wk.join(filename).to_str().unwrap().to_owned();
                 Some((
                     name,
-                    Shape::TriMesh(TriMeshShape {
-                        indices,
-                        points: vertex_list,
-                        normals,
-                        uv,
-                    }),
+                    Shape::Ply {
+                        filename,
+                        alpha: None,       // FIXME
+                        shadowalpha: None, // FIXME
+                    },
                 ))
             }
             _ => {
@@ -812,7 +666,7 @@ impl Light {
     }
 }
 /// State of the parser
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct State {
     named_material: Vec<Option<String>>,
     matrix: Vec<Matrix4<f32>>,
@@ -900,14 +754,15 @@ impl ShapeInfo {
         }
     }
 }
+#[derive(Debug)]
 pub struct InstanceInfo {
     pub matrix: Matrix4<f32>,
-    pub object: Rc<ObjectInfo>,
+    pub name: String,
 }
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ObjectInfo {
     pub name: String,
-    pub shapes: Vec<Rc<ShapeInfo>>,
+    pub shapes: Vec<ShapeInfo>,
     pub matrix: Matrix4<f32>,
 }
 
@@ -920,7 +775,7 @@ pub struct Scene {
     pub materials: HashMap<String, BSDF>,
     pub textures: HashMap<String, Texture>,
     // 3D objects
-    pub shapes: Vec<Rc<ShapeInfo>>,               //< unamed shapes
+    pub shapes: Vec<ShapeInfo>,                   //< unamed shapes
     pub objects: HashMap<String, Rc<ObjectInfo>>, //< shapes with objects
     pub instances: Vec<InstanceInfo>,             //< instances on the shapes
     pub lights: Vec<Light>,                       //< list of all light sources
@@ -955,14 +810,14 @@ fn remove_comment(line: std::str::Chars) -> Option<usize> {
                 if inside_name {
                     // Continue
                 } else {
-                    return Some(idx)
+                    return Some(idx);
                 }
             }
             '"' => {
                 inside_name = !inside_name;
             }
             _ => {}
-        } 
+        }
     }
     None
 }
@@ -983,7 +838,7 @@ pub fn read_pbrt(
         }
         str_buf.push('\n');
     }
-    
+
     // let now = Instant::now();
     let pairs =
         PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
@@ -1123,17 +978,16 @@ pub fn read_pbrt(
                                     scene_info.cameras.push(c);
                                 }
                             }
-                            Rule::texture => {
-                                match working_dir {
-                                    None => panic!("No working dir is provided, Texture are not supported"),
-                                    Some(ref wk) => {
-                                        if let Some((name, mat)) = Texture::new(rule_pair, wk) {
-                                            scene_info.textures.insert(name, mat);
-                                        }
+                            Rule::texture => match working_dir {
+                                None => {
+                                    panic!("No working dir is provided, Texture are not supported")
+                                }
+                                Some(ref wk) => {
+                                    if let Some((name, mat)) = Texture::new(rule_pair, wk) {
+                                        scene_info.textures.insert(name, mat);
                                     }
                                 }
-                                
-                            }
+                            },
                             Rule::make_named_material => {
                                 if let Some((name, mat)) = BSDF::new(rule_pair, false) {
                                     scene_info.materials.insert(name, mat);
@@ -1159,9 +1013,8 @@ pub fn read_pbrt(
                                     let mut shape = ShapeInfo::new(shape, state.matrix());
                                     shape.material_name = state.named_material();
                                     shape.emission = state.emission();
-                                    let shape = Rc::new(shape);
-                                    match state.object {
-                                        Some(ref mut o) => {
+                                    match &mut state.object {
+                                        Some(o) => {
                                             info!("Added inside an object: {}", o.name);
                                             o.shapes.push(shape)
                                         }
@@ -1208,7 +1061,9 @@ pub fn read_pbrt(
                             }
                             Rule::include => {
                                 match working_dir {
-                                    None => panic!("No working dir is provided, Texture are not supported"),
+                                    None => panic!(
+                                        "No working dir is provided, Texture are not supported"
+                                    ),
                                     Some(ref wk) => {
                                         let (name, _) = parse_parameters(rule_pair);
                                         info!("Include found: {}", name);
@@ -1245,15 +1100,9 @@ pub fn read_pbrt(
                             }
                             Rule::object_instance => {
                                 let (name, _) = parse_parameters(rule_pair);
-                                let object = match scene_info.objects.get(&name) {
-                                    Some(ref o) => Rc::clone(o),
-                                    None => {
-                                        panic!("Impossible to found the object named: {}", name)
-                                    }
-                                };
                                 scene_info.instances.push(InstanceInfo {
                                     matrix: state.matrix(),
-                                    object,
+                                    name,
                                 })
                             }
                             Rule::attribute_end | Rule::transform_end => {
@@ -1297,3 +1146,5 @@ pub fn read_pbrt_file(
     info!("Time for reading file: {:?}", Instant::now() - now);
     read_pbrt(&str_buf_other, working_dir, scene_info, state);
 }
+
+pub mod ply;
