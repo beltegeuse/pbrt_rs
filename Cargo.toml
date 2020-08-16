@@ -10,6 +10,7 @@ pest_derive = "2.1"
 log = "0.4"
 cgmath = "0.17"
 ply-rs = "0.1.2"
+nom = { git = "https://github.com/Geal/nom.git", tag = "6.0.0-alpha1" }
 
 [dev-dependencies]
 clap = "*"

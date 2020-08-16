@@ -8,6 +8,7 @@ extern crate log;
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
+extern crate nom;
 // Vector representation
 extern crate cgmath;
 // For loading ply files
@@ -1147,4 +1148,5 @@ pub fn read_pbrt_file(
     read_pbrt(&str_buf_other, working_dir, scene_info, state);
 }
 
+pub mod parser;
 pub mod ply;
