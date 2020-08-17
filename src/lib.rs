@@ -75,176 +75,222 @@ pub struct Texture {
     pub trilinear: bool,
 }
 
-/// BSDF representation
-// pub struct MatteBSDF {
-//     pub kd: Param,
-//     pub sigma: Param,
-//     pub bumpmap: Option<Param>,
-// }
-// pub struct MetalBSDF {
-//     pub eta: Param,
-//     pub k: Param,
-//     pub roughness: Param,
-//     pub u_roughness: Option<Param>,
-//     pub v_roughness: Option<Param>,
-//     pub bumpmap: Option<Param>,
-//     pub remap_roughness: bool,
-// }
-// pub struct SubstrateBSDF {
-//     pub kd: Param,
-//     pub ks: Param,
-//     pub u_roughness: Param,
-//     pub v_roughness: Param,
-//     pub bumpmap: Option<Param>,
-//     pub remap_roughness: bool,
-// }
-// pub struct GlassBSDF {
-//     pub kr: Param,
-//     pub kt: Param,
-//     pub u_roughness: Param,
-//     pub v_roughness: Param,
-//     pub index: Param,
-//     pub bumpmap: Option<Param>,
-//     pub remap_roughness: bool,
-// }
-// pub struct MirrorBSDF {
-//     pub kr: Param,
-//     pub bumpmap: Option<Param>,
-// }
+
+pub enum Roughness {
+    Isotropic(BSDFFloat),
+    Anisotropic {
+        u: BSDFFloat,
+        v: BSDFFloat
+    }
+}
+pub struct Distribution {
+    pub roughness: Roughness, // Depends of the material (metal: 0.01 iso, glass optional)
+    pub remaproughness: bool, // True
+}
+
+// BSDF representation
 pub enum BSDF {
-    // Matte(MatteBSDF),
-// Metal(MetalBSDF),
-// Substrate(SubstrateBSDF),
-// Glass(GlassBSDF),
-// Mirror(MirrorBSDF),
+    Matte {
+        kd: Spectrum, // 0.5
+        sigma: Option<BSDFFloat>, // Pure lambertian if not provided
+        bumpmap: Option<BSDFFloat>,
+    },
+    Metal {
+        eta: Spectrum, // Cu
+        k: Spectrum, // Cu
+        distribution: Distribution, // 0.01 Iso
+        bumpmap: Option<BSDFFloat>,
+    },
+    Substrate {
+        kd: Spectrum, // 0.5
+        ks: Spectrum, // 0.5
+        distribution: Distribution, // 0.1
+        bumpmap: Option<BSDFFloat>,
+    },
+    Glass {
+        kr: Spectrum, // 1 
+        kt: Spectrum, // 1
+        distribution: Option<Distribution>,
+        eta: BSDFFloat, // 1.5
+        bumpmap: Option<BSDFFloat>,
+    },
+    Mirror {
+        kr: Spectrum, // 0.9
+        bumpmap: Option<BSDFFloat>,
+    },
+    // TODO: 
+    // disney	DisneyMaterial
+    // fourier	FourierMaterial
+    // hair	HairMaterial
+    // kdsubsurface	KdSubsurfaceMaterial
+    // mix	MixMaterial
+    // none	A special material that signifies that the surface it is associated with should be ignored for ray intersections. (This is useful for specifying regions of space associated with participating media.)
+    // plastic	PlasticMaterial
+    // subsurface	SubsurfaceMaterial
+    // translucent	TranslucentMaterial
+    // uber	UberMaterial
 }
 impl BSDF {
-    // fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
-    //     let (name, mut param) = parse_parameters(pairs);
-    //     // TODO: Need to clone to avoid borrower checker
-    //     let bsdf_type = if unamed {
-    //         name.clone()
-    //     } else {
-    //         param
-    //             .remove("type")
-    //             .expect("bsdf type param is required")
-    //             .into_name()
-    //     };
-    //     match bsdf_type.as_ref() {
-    //         "matte" => {
-    //             let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
-    //             let sigma = remove_default!(param, "sigma", Param::Float(vec![0.0]));
-    //             let bumpmap = param.remove("bumpmap");
-    //             if !param.is_empty() {
-    //                 panic!("Miss parameters for Matte: {} => {:?}", name, param);
-    //             }
-    //             Some((name, BSDF::Matte(MatteBSDF { kd, sigma, bumpmap })))
-    //         }
-    //         "metal" => {
-    //             // TODO: Need to be able to export other material params
-    //             let eta = remove_default!(
-    //                 param,
-    //                 "eta",
-    //                 Param::RGB(RGBValue {
-    //                     r: 0.199_990_69,
-    //                     g: 0.922_084_6,
-    //                     b: 1.099_875_9
-    //                 })
-    //             );
-    //             let k = remove_default!(
-    //                 param,
-    //                 "k",
-    //                 Param::RGB(RGBValue {
-    //                     r: 3.904_635_4,
-    //                     g: 2.447_633_3,
-    //                     b: 2.137_652_6
-    //                 })
-    //             );
-    //             let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
-    //             let u_roughness = param.remove("uroughness");
-    //             let v_roughness = param.remove("vroughness");
-    //             let bumpmap = param.remove("bumpmap");
-    //             let remap_roughness =
-    //                 remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-    //             if !param.is_empty() {
-    //                 warn!("Miss parameters for Metal: {} => {:?}", name, param);
-    //             }
-    //             Some((
-    //                 name,
-    //                 BSDF::Metal(MetalBSDF {
-    //                     eta,
-    //                     k,
-    //                     roughness,
-    //                     u_roughness,
-    //                     v_roughness,
-    //                     bumpmap,
-    //                     remap_roughness,
-    //                 }),
-    //             ))
-    //         }
-    //         "substrate" => {
-    //             let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
-    //             let ks = remove_default!(param, "Ks", Param::RGB(RGBValue::color(0.5)));
-    //             let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
-    //             let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
-    //             let bumpmap = param.remove("bumpmap");
-    //             let remap_roughness =
-    //                 remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-    //             if !param.is_empty() {
-    //                 warn!("Miss parameters for Substrate: {} => {:?}", name, param);
-    //             }
-    //             Some((
-    //                 name,
-    //                 BSDF::Substrate(SubstrateBSDF {
-    //                     kd,
-    //                     ks,
-    //                     u_roughness,
-    //                     v_roughness,
-    //                     bumpmap,
-    //                     remap_roughness,
-    //                 }),
-    //             ))
-    //         }
-    //         "glass" => {
-    //             let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
-    //             let kt = remove_default!(param, "Kt", Param::RGB(RGBValue::color(1.0)));
-    //             let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.0]));
-    //             let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.0]));
-    //             let bumpmap = param.remove("bumpmap");
-    //             let remap_roughness =
-    //                 remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-    //             let index = if let Some(eta) = param.remove("eta") {
-    //                 eta
-    //             } else {
-    //                 remove_default!(param, "index", Param::Float(vec![1.5]))
-    //             };
-    //             if !param.is_empty() {
-    //                 warn!("Miss parameters for Glass: {} => {:?}", name, param);
-    //             }
-    //             Some((
-    //                 name,
-    //                 BSDF::Glass(GlassBSDF {
-    //                     kr,
-    //                     kt,
-    //                     u_roughness,
-    //                     v_roughness,
-    //                     index,
-    //                     bumpmap,
-    //                     remap_roughness,
-    //                 }),
-    //             ))
-    //         }
-    //         "mirror" => {
-    //             let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
-    //             let bumpmap = param.remove("bumpmap");
-    //             Some((name, BSDF::Mirror(MirrorBSDF { kr, bumpmap })))
-    //         }
-    //         _ => {
-    //             warn!("BSDF case with {} is not cover", bsdf_type);
-    //             None
-    //         }
-    //     }
-    // }
+    fn new(mut named_token: NamedToken, unamed: bool) -> Option<Self> {
+        // Get the BSDF type
+        let bsdf_type = if unamed {
+            named_token.internal_type
+        } else {
+            named_token.values
+                .remove("type")
+                .expect("bsdf type param is required")
+                .into_string()
+        };
+
+        let bumpmap = match named_token.values.remove("bumpmap") {
+            Some(v) => Some(v.into_bsdf_float()),
+            None => None,
+        };
+
+        let parse_distribution = |map: &mut HashMap<String, Value>, default: Option<f32>| -> Option<Distribution> {
+            let remaproughness = remove_default!(map, "remaproughness", Value::Boolean(true)).into_bool();
+            let alpha = match map.remove("roughness") {
+                Some(v) => Some(Roughness::Isotropic(v.into_bsdf_float())),
+                None => {
+                    let u = map.remove("uroughness");
+                    let v = map.remove("vroughness");
+                    if u.is_some() && v.is_some() {
+                        let u = u.unwrap().into_bsdf_float();
+                        let v = v.unwrap().into_bsdf_float();
+                        match (u, v) {
+                            (BSDFFloat::Float(v_u), BSDFFloat::Float(v_v)) => {
+                                if v_u == v_v {
+                                    Some(Roughness::Isotropic(BSDFFloat::Float(v_v)))
+                                } else {
+                                    Some(Roughness::Anisotropic {
+                                        u: BSDFFloat::Float(v_u), 
+                                        v: BSDFFloat::Float(v_v)
+                                    })
+                                }
+                            }
+                            (u,v) => {
+                                Some(Roughness::Anisotropic {
+                                    u, 
+                                    v
+                                })
+                            }
+                        }
+                    } else if u.is_none() && v.is_none() {
+                        None
+                    } else {
+                        panic!("{:?} {:?} roughness issue", u, v);
+                    }
+                } 
+            };
+
+            let alpha = if default.is_some() && alpha.is_none() {
+                Some(Roughness::Isotropic(BSDFFloat::Float(default.unwrap())))
+            } else {
+                alpha
+            };
+
+            match alpha {
+                None => None,
+                Some(roughness) => Some(Distribution {
+                    roughness,
+                    remaproughness
+                })
+            }
+        };
+
+        let bsdf = match &bsdf_type[..] {
+            "matte" => {
+                let kd = remove_default!(named_token.values, "Kd", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let sigma = match named_token.values.remove("sigma") {
+                    None => None,
+                    Some(v) => Some(v.into_bsdf_float()),
+                };
+               Some(
+                   BSDF::Matte {
+                       kd, sigma, bumpmap
+                   }
+               )
+            }
+            "metal" => {
+                // TODO: Need to be able to export other material params
+                let eta = remove_default!(
+                    named_token.values,
+                    "eta",
+                    Value::RGB(RGB {
+                        r: 0.199_990_69,
+                        g: 0.922_084_6,
+                        b: 1.099_875_9
+                    })
+                ).into_spectrum();
+                let k = remove_default!(
+                    named_token.values,
+                    "k",
+                    Value::RGB(RGB {
+                        r: 3.904_635_4,
+                        g: 2.447_633_3,
+                        b: 2.137_652_6
+                    })
+                ).into_spectrum();
+
+                let distribution = parse_distribution(&mut named_token.values, Some(0.01)).unwrap();
+                Some(
+                    BSDF::Metal {
+                        eta,
+                        k,
+                        distribution,
+                        bumpmap,
+                    }
+                )
+            }
+            "substrate" => {
+                let kd = remove_default!(named_token.values, "Kd", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let ks = remove_default!(named_token.values, "Ks", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let distribution = parse_distribution(&mut named_token.values, Some(0.1)).unwrap();
+                Some(BSDF::Substrate {
+                        kd,
+                        ks,
+                        distribution,
+                        bumpmap,
+                    }
+                )
+            }
+            "glass" => {
+                let kr = remove_default!(named_token.values, "Kr", Value::RGB(RGB::color(1.0))).into_spectrum();
+                let kt = remove_default!(named_token.values, "Kt", Value::RGB(RGB::color(1.0))).into_spectrum();
+                let eta = if let Some(eta) = named_token.values.remove("eta") {
+                    eta.into_bsdf_float()
+                } else {
+                    remove_default!(named_token.values, "index", Value::Float(vec![1.5])).into_bsdf_float()
+                };
+                let distribution = parse_distribution(&mut named_token.values, None);
+
+                Some(BSDF::Glass {
+                        kr,
+                        kt,
+                        distribution,
+                        eta,
+                        bumpmap,
+                    }
+                )
+            }
+            "mirror" => {
+                let kr = remove_default!(named_token.values, "Kr", Value::RGB(RGB::color(0.9))).into_spectrum();
+                Some( BSDF::Mirror { kr, bumpmap } )
+            }
+            _ => {
+                warn!("BSDF case with {} is not cover", bsdf_type);
+                None
+            }
+        };
+
+        if bsdf.is_some() {
+            if !named_token.values.is_empty() {
+                panic!("Miss parameters: {:?}", named_token.values);
+            }
+        }
+
+        bsdf
+    }
 }
 
 /// Mesh representation
@@ -735,8 +781,6 @@ pub fn read_pbrt(
             Token::NamedToken(mut named_token) => {
                 // pub enum NamedTokenType {
                 //     MakeNamedMedium,
-                //     ObjectInstance,
-                //     ObjectBegin,
                 // }
 
                 // pub struct NamedToken {
@@ -755,28 +799,26 @@ pub fn read_pbrt(
                         }
                     },
                     NamedTokenType::MakeNamedMaterial => {
-                        warn!("NamedTokenType::MakeNamedMaterial unimplemented");
+                        let name = named_token.internal_type.clone();
+                        if let Some(bsdf) = BSDF::new(named_token, false) {
+                            scene_info.materials.insert(name, bsdf);
+                        }
                     }
                     NamedTokenType::NamedMaterial => {
-                        // if let Some((name, mat)) = BSDF::new(rule_pair, false) {
-                        //     scene_info.materials.insert(name, mat);
-                        // }
                         assert!(named_token.values.is_empty());
                         state.set_named_matrial(named_token.internal_type);
                     }
                     NamedTokenType::Material => {
-                        warn!("NamedTokenType::Material unimplemented");
-                        // Rule::material => {
-                        //     if let Some((_, mat)) = BSDF::new(rule_pair, true) {
-                        //         let name = format!(
-                        //             "unamed_material_{}",
-                        //             scene_info.number_unamed_materials
-                        //         );
-                        //         scene_info.number_unamed_materials += 1;
-                        //         scene_info.materials.insert(name.to_string(), mat);
-                        //         state.set_named_matrial(name);
-                        //     }
-                        // }
+                        if let Some(bsdf) = BSDF::new(named_token, true) {
+                            // Create a fake name...
+                            let name = format!(
+                                "unamed_material_{}",
+                                scene_info.number_unamed_materials
+                            );
+                            scene_info.number_unamed_materials += 1;
+                            scene_info.materials.insert(name.to_string(), bsdf);
+                            state.set_named_matrial(name);
+                        }
                     }
                     NamedTokenType::Shape => {
                         if let Some(shape) = Shape::new(named_token, working_dir) {
@@ -837,6 +879,14 @@ pub fn read_pbrt(
                     }
                     NamedTokenType::ObjectBegin => {
                         state.new_object(named_token.internal_type);
+                    }
+                    NamedTokenType::ObjectInstance => {
+                        scene_info.instances.push(
+                            InstanceInfo {
+                                matrix: state.matrix(),
+                                name: named_token.internal_type
+                            }
+                        )
                     }
                     _ => warn!("{:?} not implemented", named_token.object_type),
                 }

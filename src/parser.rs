@@ -70,6 +70,11 @@ pub enum Spectrum {
     Mapname(String),
 }
 
+pub enum BSDFFloat {
+    Texture(String),
+    Float(f32),
+}
+
 // Contain the list of parameter type
 // some type are on the same one to avoid unecessary
 // repetition in the code below
@@ -142,6 +147,17 @@ impl Value {
             Value::Blackbody(v) => Spectrum::Blackbody(v),
             Value::Texture(v) => Spectrum::Texture(v),
             Value::Spectrum(v) => Spectrum::Spectrum(v),
+            _ => panic!("into_spectrum failed: {:?}", self),
+        }
+    }
+
+    pub fn into_bsdf_float(self) -> BSDFFloat {
+        match self {
+            Value::Texture(v) => BSDFFloat::Texture(v),
+            Value::Float(v) => {
+                assert_eq!(v.len(), 1);
+                BSDFFloat::Float(v[0])
+            },
             _ => panic!("into_spectrum failed: {:?}", self),
         }
     }
