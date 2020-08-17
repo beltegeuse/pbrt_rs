@@ -157,7 +157,7 @@ impl Value {
             Value::Float(v) => {
                 assert_eq!(v.len(), 1);
                 BSDFFloat::Float(v[0])
-            },
+            }
             _ => panic!("into_spectrum failed: {:?}", self),
         }
     }
