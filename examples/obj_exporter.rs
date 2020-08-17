@@ -10,12 +10,16 @@ use cgmath::*;
 use clap::{App, Arg};
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::BufWriter;
 use std::path::Path;
 
 /*
  Export PBRT files to Obj
 */
 fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) {
+    let mut file = BufWriter::new(file);
+    let mut mat_file = BufWriter::new(mat_file);
+
     let normalize_rgb = |rgb: &mut pbrt_rs::parser::RGB| {
         let max = rgb.r.max(rgb.b.max(rgb.g));
         if max > 1.0 {
@@ -25,7 +29,7 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
         }
     };
 
-    let default_mat = |f: &mut File| {
+    let default_mat = |f: &mut BufWriter<&mut File>| {
         writeln!(f, "Ns 1.0").unwrap();
         writeln!(f, "Ka 1.000000 1.000000 1.000000").unwrap();
         writeln!(f, "Kd 0.8 0.8 0.8").unwrap();
@@ -37,8 +41,8 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
     let emission_mat = |id_light: u32,
                         shape_name: String,
                         shape_emission: &Option<pbrt_rs::parser::Spectrum>,
-                        f_obj: &mut File,
-                        f_mat: &mut File| {
+                        f_obj: &mut BufWriter<&mut File>,
+                        f_mat: &mut BufWriter<&mut File>| {
         info!("Exporting emission:");
         info!(" - shape_name: {}", shape_name);
 
@@ -64,7 +68,7 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
     {
         // Write default material
         writeln!(mat_file, "newmtl export_default").unwrap();
-        default_mat(mat_file);
+        default_mat(&mut mat_file);
         mat_file.write_all(b"\n").unwrap();
     }
 
@@ -133,8 +137,8 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                                 nb_light,
                                 format!("Unamed_{}", i),
                                 &shape_emission,
-                                file,
-                                mat_file,
+                                &mut file,
+                                &mut mat_file,
                             );
                             nb_light += 1;
                         }
@@ -148,8 +152,8 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                                 nb_light,
                                 format!("Unamed_{}", i),
                                 &shape_emission,
-                                file,
-                                mat_file,
+                                &mut file,
+                                &mut mat_file,
                             );
                             nb_light += 1;
                         }

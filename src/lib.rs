@@ -290,7 +290,10 @@ impl Shape {
                     None
                 };
                 let uv = if let Some(v) = named_token.values.remove("uv") {
-                    Some(v.into_vector2())
+                    let v = v.into_float();
+                    assert_eq!(v.len() % 2, 0);
+                    let v = v.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
+                    Some(v)
                 } else {
                     None
                 };
@@ -716,14 +719,18 @@ pub fn read_pbrt(
                 name, class, mut values, .. // t not read
             } => {
                     // TODO: WK
-                    assert_eq!(class, "imagemap");
                     // Check type as Well... {spectrum or float} -> Two lists
 
                     // TODO: A lot of parameters...
-                    scene_info.textures.insert(name, Texture {
-                        filename: values.remove("filename").unwrap().into_string(),
-                        trilinear: remove_default!(values, "trilinear", Value::Boolean(false)).into_bool(),
-                    });
+                    match &class[..] {
+                        "imagemap" => {
+                            scene_info.textures.insert(name, Texture {
+                                filename: values.remove("filename").unwrap().into_string(),
+                                trilinear: remove_default!(values, "trilinear", Value::Boolean(false)).into_bool(),
+                            });
+                        }
+                        _ => warn!("texture type {} is ignored", class)
+                    }
                 },
             Token::NamedToken(mut named_token) => {
                 // pub enum NamedTokenType {
@@ -748,7 +755,7 @@ pub fn read_pbrt(
                         }
                     },
                     NamedTokenType::MakeNamedMaterial => {
-                        todo!();
+                        warn!("NamedTokenType::MakeNamedMaterial unimplemented");
                     }
                     NamedTokenType::NamedMaterial => {
                         // if let Some((name, mat)) = BSDF::new(rule_pair, false) {
@@ -758,7 +765,7 @@ pub fn read_pbrt(
                         state.set_named_matrial(named_token.internal_type);
                     }
                     NamedTokenType::Material => {
-                        todo!();
+                        warn!("NamedTokenType::Material unimplemented");
                         // Rule::material => {
                         //     if let Some((_, mat)) = BSDF::new(rule_pair, true) {
                         //         let name = format!(
@@ -828,7 +835,10 @@ pub fn read_pbrt(
                             state,
                         );
                     }
-                    _ => todo!("{:?} not implemented", named_token.object_type),
+                    NamedTokenType::ObjectBegin => {
+                        state.new_object(named_token.internal_type);
+                    }
+                    _ => warn!("{:?} not implemented", named_token.object_type),
                 }
             }
         }
