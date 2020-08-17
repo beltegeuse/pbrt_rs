@@ -10,13 +10,17 @@ use cgmath::*;
 use clap::{App, Arg};
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::BufWriter;
 use std::path::Path;
 
 /*
  Export PBRT files to Obj
 */
 fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) {
-    let normalize_rgb = |rgb: &mut pbrt_rs::RGBValue| {
+    let mut file = BufWriter::new(file);
+    let mut mat_file = BufWriter::new(mat_file);
+
+    let normalize_rgb = |rgb: &mut pbrt_rs::parser::RGB| {
         let max = rgb.r.max(rgb.b.max(rgb.g));
         if max > 1.0 {
             rgb.r /= max;
@@ -25,7 +29,7 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
         }
     };
 
-    let default_mat = |f: &mut File| {
+    let default_mat = |f: &mut BufWriter<&mut File>| {
         writeln!(f, "Ns 1.0").unwrap();
         writeln!(f, "Ka 1.000000 1.000000 1.000000").unwrap();
         writeln!(f, "Kd 0.8 0.8 0.8").unwrap();
@@ -36,14 +40,14 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
     };
     let emission_mat = |id_light: u32,
                         shape_name: String,
-                        shape_emission: &Option<pbrt_rs::Param>,
-                        f_obj: &mut File,
-                        f_mat: &mut File| {
+                        shape_emission: &Option<pbrt_rs::parser::Spectrum>,
+                        f_obj: &mut BufWriter<&mut File>,
+                        f_mat: &mut BufWriter<&mut File>| {
         info!("Exporting emission:");
         info!(" - shape_name: {}", shape_name);
 
         match shape_emission {
-            Some(pbrt_rs::Param::RGB(ref rgb)) => {
+            Some(pbrt_rs::parser::Spectrum::RGB(ref rgb)) => {
                 info!(" - emission: [{}, {}, {}]", rgb.r, rgb.g, rgb.b);
                 writeln!(f_obj, "usemtl light_{}", id_light).unwrap();
                 // Write the material file because the light is special materials
@@ -64,7 +68,7 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
     {
         // Write default material
         writeln!(mat_file, "newmtl export_default").unwrap();
-        default_mat(mat_file);
+        default_mat(&mut mat_file);
         mat_file.write_all(b"\n").unwrap();
     }
 
@@ -133,8 +137,8 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                                 nb_light,
                                 format!("Unamed_{}", i),
                                 &shape_emission,
-                                file,
-                                mat_file,
+                                &mut file,
+                                &mut mat_file,
                             );
                             nb_light += 1;
                         }
@@ -148,8 +152,8 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                                 nb_light,
                                 format!("Unamed_{}", i),
                                 &shape_emission,
-                                file,
-                                mat_file,
+                                &mut file,
+                                &mut mat_file,
                             );
                             nb_light += 1;
                         }
@@ -229,19 +233,19 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
         info!(" - {}", name);
         writeln!(mat_file, "newmtl {}", name).unwrap();
         match bdsf {
-            pbrt_rs::BSDF::Matte(ref matte) => {
+            pbrt_rs::BSDF::Matte { kd, .. } => {
                 writeln!(mat_file, "Ns 1.0").unwrap();
                 writeln!(mat_file, "Ka 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Tf 1.0 1.0 1.0").unwrap();
                 writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "illum 4").unwrap();
-                match matte.kd {
-                    pbrt_rs::Param::RGB(ref rgb) => {
+                match kd {
+                    pbrt_rs::parser::Spectrum::RGB(ref rgb) => {
                         let mut rgb = rgb.clone();
                         normalize_rgb(&mut rgb);
                         writeln!(mat_file, "Kd {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
-                    pbrt_rs::Param::Name(ref tex_name) => {
+                    pbrt_rs::parser::Spectrum::Texture(ref tex_name) => {
                         writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
                         let texture = &scene_info.textures[tex_name];
                         warn!(" - Texture file: {}", texture.filename);
@@ -251,7 +255,7 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                     _ => panic!("Unsupported texture for matte material"),
                 }
             }
-            pbrt_rs::BSDF::Glass(ref _b) => {
+            pbrt_rs::BSDF::Glass { .. } => {
                 writeln!(mat_file, "Ns 1000").unwrap();
                 writeln!(mat_file, "Ka 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
@@ -262,15 +266,15 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                 writeln!(mat_file, "illum 7").unwrap();
                 // TODO: Read the properties
             }
-            pbrt_rs::BSDF::Mirror(ref mirror) => {
+            pbrt_rs::BSDF::Mirror { kr, .. } => {
                 writeln!(mat_file, "Ns 100000.0").unwrap();
                 writeln!(mat_file, "Ka 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Tf 1.0 1.0 1.0").unwrap();
                 writeln!(mat_file, "Ni 1.00").unwrap();
                 writeln!(mat_file, "illum 3").unwrap();
-                match mirror.kr {
-                    pbrt_rs::Param::RGB(ref rgb) => {
+                match kr {
+                    pbrt_rs::parser::Spectrum::RGB(ref rgb) => {
                         let mut rgb = rgb.clone();
                         normalize_rgb(&mut rgb);
                         writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
@@ -278,18 +282,18 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                     _ => panic!("Unsupported texture for mirror material"),
                 }
             }
-            pbrt_rs::BSDF::Substrate(ref substrate) => {
+            pbrt_rs::BSDF::Substrate { ks, kd, .. } => {
                 writeln!(mat_file, "Ka 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Tf 1.0 1.0 1.0").unwrap();
                 writeln!(mat_file, "Ni 1.0").unwrap();
                 writeln!(mat_file, "illum 4").unwrap();
-                match substrate.ks {
-                    pbrt_rs::Param::RGB(ref rgb) => {
+                match ks {
+                    pbrt_rs::parser::Spectrum::RGB(ref rgb) => {
                         let mut rgb = rgb.clone();
                         normalize_rgb(&mut rgb);
                         writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
-                    pbrt_rs::Param::Name(ref tex_name) => {
+                    pbrt_rs::parser::Spectrum::Texture(ref tex_name) => {
                         writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
                         let texture = &scene_info.textures[tex_name];
                         warn!(" - Texture file: {}", texture.filename);
@@ -298,21 +302,23 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                     }
                     _ => panic!("Unsupported texture for metal material"),
                 }
-                match substrate.u_roughness {
-                    pbrt_rs::Param::Float(ref v) => {
-                        // TODO: Need a conversion formula for phong
-                        writeln!(mat_file, "Ns {}", 2.0 / v[0]).unwrap();
-                        info!("Found roughness: {}", 2.0 / v[0]);
-                    }
-                    _ => panic!("Unsupported texture for metal material"),
-                }
-                match substrate.kd {
-                    pbrt_rs::Param::RGB(ref rgb) => {
+                warn!("Rougness conversion is broken");
+                writeln!(mat_file, "Ns {}", 0.1).unwrap();
+                // match distribution.roughness {
+                //     pbrt_rs::Param::Float(ref v) => {
+                //         // TODO: Need a conversion formula for phong
+                //         writeln!(mat_file, "Ns {}", 2.0 / v[0]).unwrap();
+                //         info!("Found roughness: {}", 2.0 / v[0]);
+                //     }
+                //     _ => panic!("Unsupported texture for metal material"),
+                // }
+                match kd {
+                    pbrt_rs::parser::Spectrum::RGB(ref rgb) => {
                         let mut rgb = rgb.clone();
                         normalize_rgb(&mut rgb);
                         writeln!(mat_file, "Kd {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
-                    pbrt_rs::Param::Name(ref tex_name) => {
+                    pbrt_rs::parser::Spectrum::Texture(ref tex_name) => {
                         writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
                         let texture = &scene_info.textures[tex_name];
                         warn!(" - Texture file: {}", texture.filename);
@@ -322,19 +328,19 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                     _ => panic!("Unsupported texture for metal material"),
                 }
             }
-            pbrt_rs::BSDF::Metal(ref metal) => {
+            pbrt_rs::BSDF::Metal { k, .. } => {
                 writeln!(mat_file, "Ka 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Kd 0.0 0.0 0.0").unwrap();
                 writeln!(mat_file, "Tf 1.0 1.0 1.0").unwrap();
                 writeln!(mat_file, "Ni 1.00").unwrap();
                 writeln!(mat_file, "illum 3").unwrap();
-                match metal.k {
-                    pbrt_rs::Param::RGB(ref rgb) => {
+                match k {
+                    pbrt_rs::parser::Spectrum::RGB(ref rgb) => {
                         let mut rgb = rgb.clone();
                         normalize_rgb(&mut rgb);
                         writeln!(mat_file, "Ks {} {} {}", rgb.r, rgb.g, rgb.b).unwrap()
                     }
-                    pbrt_rs::Param::Name(ref tex_name) => {
+                    pbrt_rs::parser::Spectrum::Texture(ref tex_name) => {
                         writeln!(mat_file, "Ks 0.0 0.0 0.0").unwrap();
                         let texture = &scene_info.textures[tex_name];
                         warn!(" - Texture file: {}", texture.filename);
@@ -343,14 +349,16 @@ fn export_obj(scene_info: pbrt_rs::Scene, file: &mut File, mat_file: &mut File) 
                     }
                     _ => panic!("Unsupported texture for metal material"),
                 }
-                match metal.roughness {
-                    pbrt_rs::Param::Float(ref v) => {
-                        // TODO: Need a conversion formula for phong
-                        writeln!(mat_file, "Ns {}", 2.0 / v[0]).unwrap();
-                        info!("Found roughness: {}", 2.0 / v[0]);
-                    }
-                    _ => panic!("Unsupported texture for metal material"),
-                }
+                warn!("Rougness conversion is broken");
+                writeln!(mat_file, "Ns {}", 0.1).unwrap();
+                // match metal.roughness {
+                //     pbrt_rs::Param::Float(ref v) => {
+                //         // TODO: Need a conversion formula for phong
+                //         writeln!(mat_file, "Ns {}", 2.0 / v[0]).unwrap();
+                //         info!("Found roughness: {}", 2.0 / v[0]);
+                //     }
+                //     _ => panic!("Unsupported texture for metal material"),
+                // }
             }
         }
         mat_file.write_all(b"\n").unwrap();
@@ -369,15 +377,18 @@ fn print_camera_info(scene_info: &pbrt_rs::Scene) {
     for cam in &scene_info.cameras {
         info!("Camera information: ");
         match cam {
-            pbrt_rs::Camera::Perspective(ref c) => {
-                info!(" - fov: {}", c.fov);
-                info!(" - world_to_camera: {:?}", c.world_to_camera);
+            pbrt_rs::Camera::Perspective {
+                fov,
+                world_to_camera,
+            } => {
+                info!(" - fov: {}", fov);
+                info!(" - world_to_camera: {:?}", world_to_camera);
 
                 // Compute view direction and position
                 // to help setup other rendering system
-                let mat = c.world_to_camera.inverse_transform().unwrap();
+                let mat = world_to_camera.inverse_transform().unwrap();
                 let aspect_ratio = scene_info.image_size.x as f32 / scene_info.image_size.y as f32;
-                let fov_rad = Rad(c.fov * aspect_ratio * std::f32::consts::PI / 180.0); //2.0 * f32::tan((fov / 2.0) * f32::consts::PI / 180.0));//(fov * f32::consts::PI / 180.0);
+                let fov_rad = Rad(fov * aspect_ratio * std::f32::consts::PI / 180.0); //2.0 * f32::tan((fov / 2.0) * f32::consts::PI / 180.0));//(fov * f32::consts::PI / 180.0);
                 let camera_to_sample =
                     Matrix4::from_nonuniform_scale(-0.5, -0.5 * aspect_ratio, 1.0)
                         * Matrix4::from_translation(Vector3::new(-1.0, -1.0 / aspect_ratio, 0.0))

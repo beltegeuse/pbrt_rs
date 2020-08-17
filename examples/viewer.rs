@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-// For the BVH tree
-//#![feature(iter_partition_in_place)]
 
 extern crate byteorder;
 extern crate cgmath;
@@ -561,10 +559,10 @@ fn main() {
     let camera = {
         if let Some(camera) = scene_info.cameras.get(0) {
             match camera {
-                pbrt_rs::Camera::Perspective(ref cam) => {
-                    let mat = cam.world_to_camera.inverse_transform().unwrap();
+                pbrt_rs::Camera::Perspective{ world_to_camera, fov } => {
+                    let mat = world_to_camera.inverse_transform().unwrap();
                     info!("camera matrix: {:?}", mat);
-                    Camera::new(scene_info.image_size, cam.fov, mat)
+                    Camera::new(scene_info.image_size, *fov, mat)
                 }
             }
         } else {
@@ -614,3 +612,4 @@ fn main() {
     // Save the image
     save_pfm(image_size, image_buffer, output_str);
 }
+

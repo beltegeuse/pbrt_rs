@@ -4,10 +4,7 @@
 // For logging
 #[macro_use]
 extern crate log;
-// For parsing
-extern crate pest;
-#[macro_use]
-extern crate pest_derive;
+extern crate nom;
 // Vector representation
 extern crate cgmath;
 // For loading ply files
@@ -15,259 +12,17 @@ extern crate ply_rs;
 
 // parser
 use cgmath::*;
-use pest::Parser;
 use std::collections::HashMap;
 use std::io::Read;
 use std::rc::Rc;
-use std::str::FromStr;
 use std::time::Instant;
 
-const _GRAMMAR: &str = include_str!("pbrt.pest");
+// Mods
+pub mod parser;
+pub mod ply;
 
-#[derive(Parser)]
-#[grammar = "pbrt.pest"]
-struct PbrtParser;
-fn pbrt_matrix(pairs: pest::iterators::Pairs<Rule>) -> Vec<f32> {
-    let mut m: Vec<f32> = Vec::new();
-    for rule_pair in pairs {
-        // ignore brackets
-        let not_opening: bool = rule_pair.as_str() != "[";
-        let not_closing: bool = rule_pair.as_str() != "]";
-        if not_opening && not_closing {
-            let number = f32::from_str(rule_pair.clone().as_span().as_str()).unwrap();
-            m.push(number);
-        }
-    }
-    m
-}
-fn pbrt_parameter<T: FromStr>(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Vec<T>)
-where
-    <T as std::str::FromStr>::Err: std::fmt::Debug,
-{
-    let mut values: Vec<T> = Vec::new();
-    // single float or several floats using brackets
-    let ident = pairs.next();
-    let name = String::from(ident.unwrap().clone().as_span().as_str());
-    let option = pairs.next();
-    let lbrack = option.clone().unwrap();
-    if lbrack.as_str() == "[" {
-        // check for brackets
-        let mut number = pairs.next();
-        while number.is_some() {
-            let pair = number.unwrap().clone();
-            if pair.as_str() == "]" {
-                // closing bracket found
-                break;
-            } else {
-                let value = pair.as_span().as_str();
-                // TODO: Only necessary for some of the names... might impact the performance of the parser
-                let value = value.trim_matches('\"').to_string();
-                let value = value
-                    .parse::<T>()
-                    .unwrap_or_else(|_| panic!("parsing error on parameter: {}", value));
-                values.push(value);
-            }
-            number = pairs.next();
-        }
-    } else {
-        // no brackets
-        let mut number = option.clone();
-        while number.is_some() {
-            let pair = number.unwrap().clone();
-            let value = pair
-                .as_span()
-                .as_str()
-                .parse::<T>()
-                .expect("parsing error on parameter");
-            values.push(value);
-            number = pairs.next();
-        }
-    }
-    (name, values)
-}
-
-/// Intermediate representation
-/// for parsing the parameters
-#[derive(Debug, Clone)]
-pub struct RGBValue {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-}
-impl RGBValue {
-    pub fn color(v: f32) -> RGBValue {
-        RGBValue { r: v, g: v, b: v }
-    }
-}
-#[derive(Debug, Clone)]
-pub enum Param {
-    Integer(Vec<i32>),
-    Float(Vec<f32>),
-    Vector3(Vec<Vector3<f32>>),
-    Vector2(Vec<Vector2<f32>>),
-    Name(String),
-    RGB(RGBValue),
-    Bool(bool),
-}
-impl Param {
-    fn into_float(self) -> Vec<f32> {
-        match self {
-            Param::Float(v) => v,
-            _ => panic!("impossible to convert to float: {:?}", self),
-        }
-    }
-    fn parse_float(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter(pairs);
-        (name, Param::Float(values))
-    }
-
-    fn into_name(self) -> String {
-        match self {
-            Param::Name(v) => v,
-            _ => panic!("impossible to convert to name: {:?}", self),
-        }
-    }
-    fn parse_name(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<String>(pairs);
-        let values = values[0].clone(); // TODO
-        let values = values.trim_matches('\"').to_string();
-        (name, Param::Name(values))
-    }
-
-    fn into_rgb(self) -> RGBValue {
-        match self {
-            Param::RGB(rgb) => rgb,
-            _ => panic!("impossible to convert to rgb: {:?}", self),
-        }
-    }
-    fn parse_rgb(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<f32>(pairs);
-        (
-            name,
-            Param::RGB(RGBValue {
-                r: values[0],
-                g: values[1],
-                b: values[2],
-            }),
-        )
-    }
-
-    fn into_integer(self) -> Vec<i32> {
-        match self {
-            Param::Integer(v) => v,
-            _ => panic!("impossible to convert to integer: {:?}", self),
-        }
-    }
-    fn parse_integer(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<i32>(pairs);
-        (name, Param::Integer(values))
-    }
-
-    fn into_vector3(self) -> Vec<Vector3<f32>> {
-        match self {
-            Param::Vector3(v) => v,
-            _ => panic!("impossible to convert to integer: {:?}", self),
-        }
-    }
-    fn parse_vector3(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<f32>(pairs);
-        if values.len() % 3 != 0 {
-            panic!("Non 3 multiples for vector 3");
-        }
-        let values = values
-            .chunks(3)
-            .map(|v| Vector3::new(v[0], v[1], v[2]))
-            .collect();
-        (name, Param::Vector3(values))
-    }
-
-    fn into_vector2(self) -> Vec<Vector2<f32>> {
-        match self {
-            Param::Vector2(v) => v,
-            _ => panic!("impossible to convert to integer: {:?}", self),
-        }
-    }
-    fn parse_vector2(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<f32>(pairs);
-        if values.len() % 2 != 0 {
-            panic!("Non 2 multiples for point 2");
-        }
-        let values = values.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
-        (name, Param::Vector2(values))
-    }
-
-    fn into_bool(self) -> bool {
-        match self {
-            Param::Bool(v) => v,
-            _ => panic!("impossible to convert to bool: {:?}", self),
-        }
-    }
-    fn parse_bool(pairs: &mut pest::iterators::Pairs<Rule>) -> (String, Self) {
-        let (name, values) = pbrt_parameter::<bool>(pairs);
-        let values = values[0];
-        (name, Param::Bool(values))
-    }
-}
-
-fn parse_parameters(pairs: pest::iterators::Pair<Rule>) -> (String, HashMap<String, Param>) {
-    let mut name = vec![];
-    let mut param_map: HashMap<String, Param> = HashMap::default();
-    for pair in pairs.into_inner() {
-        match pair.as_rule() {
-            Rule::empty_string => {}
-            Rule::string => {
-                let mut string_pairs = pair.into_inner();
-                let ident = string_pairs.next();
-                name.push(String::from_str(ident.unwrap().clone().as_span().as_str()).unwrap());
-            }
-            Rule::parameter => {
-                for parameter_pair in pair.into_inner() {
-                    match parameter_pair.as_rule() {
-                        Rule::float_param => {
-                            let (name, value) =
-                                Param::parse_float(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::bool_param => {
-                            let (name, value) = Param::parse_bool(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::string_param | Rule::texture_param => {
-                            let (name, value) = Param::parse_name(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::rgb_param => {
-                            let (name, value) = Param::parse_rgb(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::integer_param => {
-                            let (name, value) =
-                                Param::parse_integer(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::point_param | Rule::normal_param => {
-                            let (name, value) =
-                                Param::parse_vector3(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        Rule::point2_param => {
-                            let (name, value) =
-                                Param::parse_vector2(&mut parameter_pair.into_inner());
-                            param_map.insert(name, value);
-                        }
-                        _ => warn!("Ignoring Parameter: {}", parameter_pair.as_str()),
-                    }
-                }
-            }
-            _ => warn!("Ignoring: {}", pair.as_str()),
-        }
-    }
-    if !name.is_empty() {
-        (name[0].clone(), param_map)
-    } else {
-        panic!("Parse parameter, name is not provided");
-    }
-}
+// Parser
+use parser::*;
 
 // Helper to remove the map elements
 // if the elemet is not found, the default value is used
@@ -282,26 +37,31 @@ macro_rules! remove_default {
 }
 
 /// Camera representations
-pub struct CameraPerspective {
-    pub fov: f32,
-    pub world_to_camera: Matrix4<f32>,
-}
 pub enum Camera {
-    Perspective(CameraPerspective),
+    Perspective {
+        fov: f32,
+        world_to_camera: Matrix4<f32>,
+    },
 }
 impl Camera {
-    fn new(pairs: pest::iterators::Pair<Rule>, mat: Matrix4<f32>) -> Option<Self> {
-        let (name, mut param) = parse_parameters(pairs);
-        match name.as_ref() {
+    fn new(mut named_token: NamedToken, mat: Matrix4<f32>) -> Option<Self> {
+        match &named_token.internal_type[..] {
             "perspective" => {
-                let fov = param.remove("fov").expect("fov is not given").into_float()[0];
-                Some(Camera::Perspective(CameraPerspective {
+                let fov = named_token
+                    .values
+                    .remove("fov")
+                    .expect("fov is not given")
+                    .into_float()[0];
+                Some(Camera::Perspective {
                     fov,
                     world_to_camera: mat,
-                }))
+                })
             }
             _ => {
-                warn!("Camera case with {} is not cover", name);
+                warn!(
+                    "Camera case with {:?} is not cover",
+                    named_token.internal_type
+                );
                 None
             }
         }
@@ -314,195 +74,222 @@ pub struct Texture {
     pub filename: String,
     pub trilinear: bool,
 }
-impl Texture {
-    fn new(pairs: pest::iterators::Pair<Rule>, wk: &std::path::Path) -> Option<(String, Self)> {
-        let (name, mut param) = parse_parameters(pairs);
 
-        if let Some(filename) = param.remove("filename") {
-            let trilinear = remove_default!(param, "trilinear", Param::Bool(true)).into_bool();
-            Some((
-                name,
-                Texture {
-                    filename: wk.join(filename.into_name()).to_str().unwrap().to_string(),
-                    trilinear,
-                },
-            ))
-        } else {
-            warn!("Unsupported texture: {}", name);
-            None
-        }
+
+pub enum Roughness {
+    Isotropic(BSDFFloat),
+    Anisotropic {
+        u: BSDFFloat,
+        v: BSDFFloat
     }
 }
+pub struct Distribution {
+    pub roughness: Roughness, // Depends of the material (metal: 0.01 iso, glass optional)
+    pub remaproughness: bool, // True
+}
 
-/// BSDF representation
-pub struct MatteBSDF {
-    pub kd: Param,
-    pub sigma: Param,
-    pub bumpmap: Option<Param>,
-}
-pub struct MetalBSDF {
-    pub eta: Param,
-    pub k: Param,
-    pub roughness: Param,
-    pub u_roughness: Option<Param>,
-    pub v_roughness: Option<Param>,
-    pub bumpmap: Option<Param>,
-    pub remap_roughness: bool,
-}
-pub struct SubstrateBSDF {
-    pub kd: Param,
-    pub ks: Param,
-    pub u_roughness: Param,
-    pub v_roughness: Param,
-    pub bumpmap: Option<Param>,
-    pub remap_roughness: bool,
-}
-pub struct GlassBSDF {
-    pub kr: Param,
-    pub kt: Param,
-    pub u_roughness: Param,
-    pub v_roughness: Param,
-    pub index: Param,
-    pub bumpmap: Option<Param>,
-    pub remap_roughness: bool,
-}
-pub struct MirrorBSDF {
-    pub kr: Param,
-    pub bumpmap: Option<Param>,
-}
+// BSDF representation
 pub enum BSDF {
-    Matte(MatteBSDF),
-    Metal(MetalBSDF),
-    Substrate(SubstrateBSDF),
-    Glass(GlassBSDF),
-    Mirror(MirrorBSDF),
+    Matte {
+        kd: Spectrum, // 0.5
+        sigma: Option<BSDFFloat>, // Pure lambertian if not provided
+        bumpmap: Option<BSDFFloat>,
+    },
+    Metal {
+        eta: Spectrum, // Cu
+        k: Spectrum, // Cu
+        distribution: Distribution, // 0.01 Iso
+        bumpmap: Option<BSDFFloat>,
+    },
+    Substrate {
+        kd: Spectrum, // 0.5
+        ks: Spectrum, // 0.5
+        distribution: Distribution, // 0.1
+        bumpmap: Option<BSDFFloat>,
+    },
+    Glass {
+        kr: Spectrum, // 1 
+        kt: Spectrum, // 1
+        distribution: Option<Distribution>,
+        eta: BSDFFloat, // 1.5
+        bumpmap: Option<BSDFFloat>,
+    },
+    Mirror {
+        kr: Spectrum, // 0.9
+        bumpmap: Option<BSDFFloat>,
+    },
+    // TODO: 
+    // disney	DisneyMaterial
+    // fourier	FourierMaterial
+    // hair	HairMaterial
+    // kdsubsurface	KdSubsurfaceMaterial
+    // mix	MixMaterial
+    // none	A special material that signifies that the surface it is associated with should be ignored for ray intersections. (This is useful for specifying regions of space associated with participating media.)
+    // plastic	PlasticMaterial
+    // subsurface	SubsurfaceMaterial
+    // translucent	TranslucentMaterial
+    // uber	UberMaterial
 }
 impl BSDF {
-    fn new(pairs: pest::iterators::Pair<Rule>, unamed: bool) -> Option<(String, Self)> {
-        let (name, mut param) = parse_parameters(pairs);
-        // TODO: Need to clone to avoid borrower checker
+    fn new(mut named_token: NamedToken, unamed: bool) -> Option<Self> {
+        // Get the BSDF type
         let bsdf_type = if unamed {
-            name.clone()
+            named_token.internal_type
         } else {
-            param
+            named_token.values
                 .remove("type")
                 .expect("bsdf type param is required")
-                .into_name()
+                .into_string()
         };
-        match bsdf_type.as_ref() {
+
+        let bumpmap = match named_token.values.remove("bumpmap") {
+            Some(v) => Some(v.into_bsdf_float()),
+            None => None,
+        };
+
+        let parse_distribution = |map: &mut HashMap<String, Value>, default: Option<f32>| -> Option<Distribution> {
+            let remaproughness = remove_default!(map, "remaproughness", Value::Boolean(true)).into_bool();
+            let alpha = match map.remove("roughness") {
+                Some(v) => Some(Roughness::Isotropic(v.into_bsdf_float())),
+                None => {
+                    let u = map.remove("uroughness");
+                    let v = map.remove("vroughness");
+                    if u.is_some() && v.is_some() {
+                        let u = u.unwrap().into_bsdf_float();
+                        let v = v.unwrap().into_bsdf_float();
+                        match (u, v) {
+                            (BSDFFloat::Float(v_u), BSDFFloat::Float(v_v)) => {
+                                if v_u == v_v {
+                                    Some(Roughness::Isotropic(BSDFFloat::Float(v_v)))
+                                } else {
+                                    Some(Roughness::Anisotropic {
+                                        u: BSDFFloat::Float(v_u), 
+                                        v: BSDFFloat::Float(v_v)
+                                    })
+                                }
+                            }
+                            (u,v) => {
+                                Some(Roughness::Anisotropic {
+                                    u, 
+                                    v
+                                })
+                            }
+                        }
+                    } else if u.is_none() && v.is_none() {
+                        None
+                    } else {
+                        panic!("{:?} {:?} roughness issue", u, v);
+                    }
+                } 
+            };
+
+            let alpha = if default.is_some() && alpha.is_none() {
+                Some(Roughness::Isotropic(BSDFFloat::Float(default.unwrap())))
+            } else {
+                alpha
+            };
+
+            match alpha {
+                None => None,
+                Some(roughness) => Some(Distribution {
+                    roughness,
+                    remaproughness
+                })
+            }
+        };
+
+        let bsdf = match &bsdf_type[..] {
             "matte" => {
-                let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
-                let sigma = remove_default!(param, "sigma", Param::Float(vec![0.0]));
-                let bumpmap = param.remove("bumpmap");
-                if !param.is_empty() {
-                    panic!("Miss parameters for Matte: {} => {:?}", name, param);
-                }
-                Some((name, BSDF::Matte(MatteBSDF { kd, sigma, bumpmap })))
+                let kd = remove_default!(named_token.values, "Kd", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let sigma = match named_token.values.remove("sigma") {
+                    None => None,
+                    Some(v) => Some(v.into_bsdf_float()),
+                };
+               Some(
+                   BSDF::Matte {
+                       kd, sigma, bumpmap
+                   }
+               )
             }
             "metal" => {
                 // TODO: Need to be able to export other material params
                 let eta = remove_default!(
-                    param,
+                    named_token.values,
                     "eta",
-                    Param::RGB(RGBValue {
+                    Value::RGB(RGB {
                         r: 0.199_990_69,
                         g: 0.922_084_6,
                         b: 1.099_875_9
                     })
-                );
+                ).into_spectrum();
                 let k = remove_default!(
-                    param,
+                    named_token.values,
                     "k",
-                    Param::RGB(RGBValue {
+                    Value::RGB(RGB {
                         r: 3.904_635_4,
                         g: 2.447_633_3,
                         b: 2.137_652_6
                     })
-                );
-                let roughness = remove_default!(param, "roughness", Param::Float(vec![0.1]));
-                let u_roughness = param.remove("uroughness");
-                let v_roughness = param.remove("vroughness");
-                let bumpmap = param.remove("bumpmap");
-                let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-                if !param.is_empty() {
-                    warn!("Miss parameters for Metal: {} => {:?}", name, param);
-                }
-                Some((
-                    name,
-                    BSDF::Metal(MetalBSDF {
+                ).into_spectrum();
+
+                let distribution = parse_distribution(&mut named_token.values, Some(0.01)).unwrap();
+                Some(
+                    BSDF::Metal {
                         eta,
                         k,
-                        roughness,
-                        u_roughness,
-                        v_roughness,
+                        distribution,
                         bumpmap,
-                        remap_roughness,
-                    }),
-                ))
+                    }
+                )
             }
             "substrate" => {
-                let kd = remove_default!(param, "Kd", Param::RGB(RGBValue::color(0.5)));
-                let ks = remove_default!(param, "Ks", Param::RGB(RGBValue::color(0.5)));
-                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.1]));
-                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.1]));
-                let bumpmap = param.remove("bumpmap");
-                let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-                if !param.is_empty() {
-                    warn!("Miss parameters for Substrate: {} => {:?}", name, param);
-                }
-                Some((
-                    name,
-                    BSDF::Substrate(SubstrateBSDF {
+                let kd = remove_default!(named_token.values, "Kd", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let ks = remove_default!(named_token.values, "Ks", Value::RGB(RGB::color(0.5))).into_spectrum();
+                let distribution = parse_distribution(&mut named_token.values, Some(0.1)).unwrap();
+                Some(BSDF::Substrate {
                         kd,
                         ks,
-                        u_roughness,
-                        v_roughness,
+                        distribution,
                         bumpmap,
-                        remap_roughness,
-                    }),
-                ))
+                    }
+                )
             }
             "glass" => {
-                let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
-                let kt = remove_default!(param, "Kt", Param::RGB(RGBValue::color(1.0)));
-                let u_roughness = remove_default!(param, "uroughness", Param::Float(vec![0.0]));
-                let v_roughness = remove_default!(param, "vroughness", Param::Float(vec![0.0]));
-                let bumpmap = param.remove("bumpmap");
-                let remap_roughness =
-                    remove_default!(param, "remaproughness", Param::Bool(true)).into_bool();
-                let index = if let Some(eta) = param.remove("eta") {
-                    eta
+                let kr = remove_default!(named_token.values, "Kr", Value::RGB(RGB::color(1.0))).into_spectrum();
+                let kt = remove_default!(named_token.values, "Kt", Value::RGB(RGB::color(1.0))).into_spectrum();
+                let eta = if let Some(eta) = named_token.values.remove("eta") {
+                    eta.into_bsdf_float()
                 } else {
-                    remove_default!(param, "index", Param::Float(vec![1.5]))
+                    remove_default!(named_token.values, "index", Value::Float(vec![1.5])).into_bsdf_float()
                 };
-                if !param.is_empty() {
-                    warn!("Miss parameters for Glass: {} => {:?}", name, param);
-                }
-                Some((
-                    name,
-                    BSDF::Glass(GlassBSDF {
+                let distribution = parse_distribution(&mut named_token.values, None);
+
+                Some(BSDF::Glass {
                         kr,
                         kt,
-                        u_roughness,
-                        v_roughness,
-                        index,
+                        distribution,
+                        eta,
                         bumpmap,
-                        remap_roughness,
-                    }),
-                ))
+                    }
+                )
             }
             "mirror" => {
-                let kr = remove_default!(param, "Kr", Param::RGB(RGBValue::color(1.0)));
-                let bumpmap = param.remove("bumpmap");
-                Some((name, BSDF::Mirror(MirrorBSDF { kr, bumpmap })))
+                let kr = remove_default!(named_token.values, "Kr", Value::RGB(RGB::color(0.9))).into_spectrum();
+                Some( BSDF::Mirror { kr, bumpmap } )
             }
             _ => {
                 warn!("BSDF case with {} is not cover", bsdf_type);
                 None
             }
+        };
+
+        if bsdf.is_some() {
+            if !named_token.values.is_empty() {
+                panic!("Miss parameters: {:?}", named_token.values);
+            }
         }
+
+        bsdf
     }
 }
 
@@ -522,75 +309,66 @@ pub enum Shape {
     },
 }
 impl Shape {
-    fn new(
-        pairs: pest::iterators::Pair<Rule>,
-        wk: Option<&std::path::Path>,
-    ) -> Option<(String, Self)> {
-        let (name, mut param) = parse_parameters(pairs);
-        match name.as_ref() {
+    fn new(mut named_token: NamedToken, wk: Option<&std::path::Path>) -> Option<Self> {
+        match &named_token.internal_type[..] {
             "trianglemesh" => {
-                let points = param
+                let points = named_token
+                    .values
                     .remove("P")
-                    .expect(&format!("P is required {:?}", param))
+                    .expect(&format!("P is required {:?}", named_token))
                     .into_vector3();
                 let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
-                let indices = param
+                let indices = named_token
+                    .values
                     .remove("indices")
-                    .expect(&format!("indice is required {:?}", param))
+                    .expect(&format!("indice is required {:?}", named_token))
                     .into_integer();
                 if indices.len() % 3 != 0 {
-                    panic!("Support only 3 indices list {:?}", param);
+                    panic!("Support only 3 indices list {:?}", named_token);
                 }
                 let indices = indices
                     .chunks(3)
                     .map(|v| Vector3::new(v[0] as usize, v[1] as usize, v[2] as usize))
                     .collect();
-                let normals = if let Some(v) = param.remove("N") {
+                let normals = if let Some(v) = named_token.values.remove("N") {
                     Some(v.into_vector3())
                 } else {
                     None
                 };
-                let uv = if let Some(v) = param.remove("uv") {
-                    Some(
-                        v.into_float()
-                            .chunks(2)
-                            .map(|v| Vector2::new(v[0], v[1]))
-                            .collect(),
-                    )
+                let uv = if let Some(v) = named_token.values.remove("uv") {
+                    let v = v.into_float();
+                    assert_eq!(v.len() % 2, 0);
+                    let v = v.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
+                    Some(v)
                 } else {
                     None
                 };
-                Some((
-                    name,
-                    Shape::TriMesh {
-                        indices,
-                        points,
-                        normals,
-                        uv,
-                    },
-                ))
+                Some(Shape::TriMesh {
+                    indices,
+                    points,
+                    normals,
+                    uv,
+                })
             }
             "plymesh" => {
                 let wk = match wk {
                     None => panic!("Plymesh is not supported without wk specified"),
                     Some(ref v) => v,
                 };
-                let filename = param
+                let filename = named_token
+                    .values
                     .remove("filename")
                     .expect("filename is required")
-                    .into_name();
+                    .into_string();
                 let filename = wk.join(filename).to_str().unwrap().to_owned();
-                Some((
-                    name,
-                    Shape::Ply {
-                        filename,
-                        alpha: None,       // FIXME
-                        shadowalpha: None, // FIXME
-                    },
-                ))
+                Some(Shape::Ply {
+                    filename,
+                    alpha: None,       // FIXME
+                    shadowalpha: None, // FIXME
+                })
             }
             _ => {
-                warn!("Shape case with {} is not cover", name);
+                warn!("Shape case with {} is not cover", named_token.internal_type);
                 None
             }
         }
@@ -599,67 +377,98 @@ impl Shape {
 
 /// Lights
 #[derive(Debug)]
-pub struct DistantLight {
-    pub luminance: Param,
-    pub from: Point3<f32>,
-    pub to: Point3<f32>,
-    pub scale: RGBValue,
-}
-#[derive(Debug)]
-pub struct InfiniteLight {
-    pub luminance: Param, // Can be RGB or map
-    pub samples: u32,
-    pub scale: RGBValue,
-}
-#[derive(Debug)]
-pub struct PointLight {
-    pub intensity: RGBValue,
-    pub from: Point3<f32>,
-    pub scale: RGBValue,
-}
-#[derive(Debug)]
 pub enum Light {
-    Distant(DistantLight),
-    Infinite(InfiniteLight),
-    Point(PointLight),
+    Distant {
+        luminance: Spectrum,
+        from: Point3<f32>,
+        to: Point3<f32>,
+        scale: RGB,
+    },
+    Infinite {
+        luminance: Spectrum,
+        samples: u32,
+        scale: RGB,
+    },
+    Point {
+        intensity: Spectrum,
+        from: Point3<f32>,
+        scale: RGB,
+    },
 }
 impl Light {
-    fn new(pairs: pest::iterators::Pair<Rule>) -> Option<Self> {
-        let (name, mut param) = parse_parameters(pairs);
-        info!("Reading light source: {}", name);
-        let scale = if let Some(scale) = param.remove("scale") {
-            let s = scale.into_rgb();
-            info!(" - Scale: {:?}", s);
-            s
+    fn new(mut named_token: NamedToken) -> Option<Self> {
+        let scale = if let Some(scale) = named_token.values.remove("scale") {
+            scale.into_rgb()
         } else {
-            RGBValue::color(1.0)
+            RGB::color(1.0)
         };
 
-        match name.as_ref() {
+        match &named_token.internal_type[..] {
             "infinite" => {
-                let samples = if let Some(samples) = param.remove("samples") {
-                    samples.into_integer()[0] as u32
-                } else {
-                    1
-                };
-                let luminance = if let Some(luminance) = param.remove("L") {
-                    luminance
-                } else {
-                    Param::RGB(RGBValue::color(1.0))
-                };
-                let luminance = if let Some(mapname) = param.remove("mapname") {
-                    mapname
+                let samples =
+                    remove_default!(named_token.values, "samples", Value::Integer(vec![1]))
+                        .into_integer()[0] as u32;
+                let luminance =
+                    remove_default!(named_token.values, "L", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+
+                // In case the map name is provide, we will replace the luminance
+                let luminance = if let Some(mapname) = named_token.values.remove("mapname") {
+                    Spectrum::Mapname(mapname.into_string())
                 } else {
                     luminance
                 };
-                Some(Light::Infinite(InfiniteLight {
+
+                Some(Light::Infinite {
                     luminance,
                     samples,
                     scale,
-                }))
+                })
+            }
+            "point" => {
+                let intensity =
+                    remove_default!(named_token.values, "I", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let from = remove_default!(
+                    named_token.values,
+                    "from",
+                    Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
+                )
+                .into_vector3()[0];
+                let from = Point3::from_vec(from);
+                Some(Light::Point {
+                    intensity,
+                    from,
+                    scale,
+                })
+            }
+            "distant" => {
+                let luminance =
+                    remove_default!(named_token.values, "L", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let from = remove_default!(
+                    named_token.values,
+                    "from",
+                    Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
+                )
+                .into_vector3()[0];
+                let to = remove_default!(
+                    named_token.values,
+                    "to",
+                    Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
+                )
+                .into_vector3()[0];
+                let from = Point3::from_vec(from);
+                let to = Point3::from_vec(to);
+                Some(Light::Distant {
+                    luminance,
+                    from,
+                    to,
+                    scale,
+                })
             }
             _ => {
-                warn!("Light case with {} is not cover", name);
+                warn!("Light case with {} is not cover", named_token.internal_type);
                 None
             }
         }
@@ -670,7 +479,7 @@ impl Light {
 pub struct State {
     named_material: Vec<Option<String>>,
     matrix: Vec<Matrix4<f32>>,
-    emission: Vec<Option<Param>>,
+    emission: Vec<Option<Spectrum>>,
     object: Option<ObjectInfo>,
 }
 impl Default for State {
@@ -716,10 +525,10 @@ impl State {
         self.named_material[last_id] = Some(s);
     }
     // Emission
-    fn emission(&self) -> Option<Param> {
+    fn emission(&self) -> Option<Spectrum> {
         self.emission.last().unwrap().clone()
     }
-    fn set_emission(&mut self, e: Param) {
+    fn set_emission(&mut self, e: Spectrum) {
         let last_id = self.emission.len() - 1;
         self.emission[last_id] = Some(e);
     }
@@ -742,7 +551,7 @@ pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
     pub matrix: Matrix4<f32>,
-    pub emission: Option<Param>,
+    pub emission: Option<Spectrum>,
 }
 impl ShapeInfo {
     fn new(shape: Shape, matrix: Matrix4<f32>) -> Self {
@@ -800,332 +609,290 @@ impl Default for Scene {
     }
 }
 
-// Function to remove # inside the pbrt file
-// note some care is required if the names containts #
-fn remove_comment(line: std::str::Chars) -> Option<usize> {
-    let mut inside_name = false;
-    for (idx, c) in line.enumerate() {
-        match c {
-            '#' => {
-                if inside_name {
-                    // Continue
-                } else {
-                    return Some(idx);
-                }
-            }
-            '"' => {
-                inside_name = !inside_name;
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 pub fn read_pbrt(
-    scene_string: &String,
+    scene_string: &str,
     working_dir: Option<&std::path::Path>,
     scene_info: &mut Scene,
     state: &mut State,
 ) {
-    // Remove all # comments or lines
-    // indeed, there is a problem for now to handle these cases
-    let mut str_buf = String::with_capacity(scene_string.len());
-    for l in scene_string.lines() {
-        match remove_comment(l.chars()) {
-            Some(idx) => str_buf.push_str(&l[..idx]),
-            None => str_buf.push_str(l),
-        }
-        str_buf.push('\n');
+    // Parse the scene
+    let (scene_string, tokens) =
+        parse::<nom::error::VerboseError<&str>>(scene_string).expect("Error during parsing");
+    // Check that we parsed all!
+    match scene_string {
+        "" => (),
+        _ => panic!("Parsing is not complete: {:?}", scene_string),
     }
 
-    // let now = Instant::now();
-    let pairs =
-        PbrtParser::parse(Rule::pbrt, &str_buf).unwrap_or_else(|e| panic!("Parsing error: {}", e));
-    for pair in pairs {
-        let span = pair.clone().as_span();
-        debug!("Rule:    {:?}", pair.as_rule());
-        debug!("Span:    {:?}", span);
-        debug!("Text:    {}", span.as_str());
-        for inner_pair in pair.into_inner() {
-            debug!("Inner Rule:    {:?}", inner_pair.as_rule());
-            debug!("Inner Text:    {}", inner_pair.as_str());
-            match inner_pair.as_rule() {
-                Rule::transform => {
-                    // FIMXE: Does the rule replace the transformation?
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 16 {
-                        panic!("Transform need to have 16 floats: {:?}", values);
-                    }
-                    let m00 = values[0];
-                    let m01 = values[1];
-                    let m02 = values[2];
-                    let m03 = values[3];
-                    let m10 = values[4];
-                    let m11 = values[5];
-                    let m12 = values[6];
-                    let m13 = values[7];
-                    let m20 = values[8];
-                    let m21 = values[9];
-                    let m22 = values[10];
-                    let m23 = values[11];
-                    let m30 = values[12];
-                    let m31 = values[13];
-                    let m32 = values[14];
-                    let m33 = values[15];
-                    #[rustfmt::skip]
-                    let matrix = Matrix4::new(
-                        m00, m01, m02, m03,
-                        m10, m11, m12, m13,
-                        m20, m21, m22, m23,
-                        m30, m31, m32, m33,
-                    );
-                    state.replace_matrix(matrix);
-                }
-                Rule::concat_transform => {
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 16 {
-                        panic!("Transform need to have 16 floats: {:?}", values);
-                    }
-                    let m00 = values[0];
-                    let m01 = values[1];
-                    let m02 = values[2];
-                    let m03 = values[3];
-                    let m10 = values[4];
-                    let m11 = values[5];
-                    let m12 = values[6];
-                    let m13 = values[7];
-                    let m20 = values[8];
-                    let m21 = values[9];
-                    let m22 = values[10];
-                    let m23 = values[11];
-                    let m30 = values[12];
-                    let m31 = values[13];
-                    let m32 = values[14];
-                    let m33 = values[15];
+    // pub enum Token {
+    //     Texture {
+    //         name: String,
+    //         t: String,
+    //         class: String,
+    //         values: HashMap<String, Value>,
+    //     },
+    // }
 
-                    #[rustfmt::skip]
-                    let matrix = state.matrix() * Matrix4::new(
-                        m00, m01, m02, m03,
-                        m10, m11, m12, m13,
-                        m20, m21, m22, m23,
-                        m30, m31, m32, m33,
-                    );
-                    state.replace_matrix(matrix);
-                }
-                Rule::scale => {
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 3 {
-                        panic!("Scale need to have 3 floats: {:?}", values);
-                    }
-                    let matrix = state.matrix()
-                        * Matrix4::from_diagonal(Vector4::new(
-                            values[0], values[1], values[2], 1.0,
-                        ));
-                    state.replace_matrix(matrix);
-                }
-                Rule::look_at => {
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 9 {
-                        panic!("LookAt need to have 9 floats: {:?}", values);
-                    }
-                    let eye = Point3::new(values[0], values[1], values[2]);
-                    let target = Point3::new(values[3], values[4], values[5]);
-                    let up = Vector3::new(values[6], values[7], values[8]);
+    for t in tokens {
+        match t {
+            Token::Transform(values) => {
+                let m00 = values[0];
+                let m01 = values[1];
+                let m02 = values[2];
+                let m03 = values[3];
+                let m10 = values[4];
+                let m11 = values[5];
+                let m12 = values[6];
+                let m13 = values[7];
+                let m20 = values[8];
+                let m21 = values[9];
+                let m22 = values[10];
+                let m23 = values[11];
+                let m30 = values[12];
+                let m31 = values[13];
+                let m32 = values[14];
+                let m33 = values[15];
+                #[rustfmt::skip]
+                let matrix = Matrix4::new(
+                    m00, m01, m02, m03,
+                    m10, m11, m12, m13,
+                    m20, m21, m22, m23,
+                    m30, m31, m32, m33,
+                );
+                state.replace_matrix(matrix);
+            },
+            Token::ConcatTransform(values) => {
+                let m00 = values[0];
+                let m01 = values[1];
+                let m02 = values[2];
+                let m03 = values[3];
+                let m10 = values[4];
+                let m11 = values[5];
+                let m12 = values[6];
+                let m13 = values[7];
+                let m20 = values[8];
+                let m21 = values[9];
+                let m22 = values[10];
+                let m23 = values[11];
+                let m30 = values[12];
+                let m31 = values[13];
+                let m32 = values[14];
+                let m33 = values[15];
 
-                    let dir = (target - eye).normalize();
-                    let left = -dir.cross(up.normalize()).normalize();
-                    let new_up = dir.cross(left);
+                #[rustfmt::skip]
+                let matrix = state.matrix() * Matrix4::new(
+                    m00, m01, m02, m03,
+                    m10, m11, m12, m13,
+                    m20, m21, m22, m23,
+                    m30, m31, m32, m33,
+                );
+                state.replace_matrix(matrix);
+            },
+            Token::Scale(values) => {
+                let matrix = state.matrix()
+                    * Matrix4::from_diagonal(Vector4::new(
+                        values[0], values[1], values[2], 1.0,
+                    ));
+                state.replace_matrix(matrix);
+            },
+            Token::LookAt {
+                eye, look, up
+            } => {
+                let dir = (look - eye).normalize();
+                let left = -dir.cross(up.normalize()).normalize();
+                let new_up = dir.cross(left);
 
-                    #[rustfmt::skip]
-                    let matrix = state.matrix() *  Matrix4::new(
-                        left.x, left.y, left.z, 0.0,
-                        new_up.x, new_up.y, new_up.z, 0.0,
-                        dir.x, dir.y, dir.z, 0.0,
-                        eye.x, eye.y, eye.z, 1.0,
-                    ).inverse_transform().unwrap();
+                #[rustfmt::skip]
+                let matrix = state.matrix() *  Matrix4::new(
+                    left.x, left.y, left.z, 0.0,
+                    new_up.x, new_up.y, new_up.z, 0.0,
+                    dir.x, dir.y, dir.z, 0.0,
+                    eye.x, eye.y, eye.z, 1.0,
+                ).inverse_transform().unwrap();
 
-                    state.replace_matrix(matrix);
-                    info!("After lookat: {:?}", state.matrix());
-                }
-                Rule::translate => {
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 3 {
-                        panic!("Translate need to have 3 floats: {:?}", values);
+                state.replace_matrix(matrix);
+            },
+            Token::Translate(values) => {
+                let matrix = state.matrix()
+                        * Matrix4::from_translation(values);
+                state.replace_matrix(matrix);
+            },
+            Token::Rotate {
+                angle,
+                axis
+            } => {
+                let matrix = state.matrix() * Matrix4::from_axis_angle(axis, Deg(angle));
+                state.replace_matrix(matrix);
+            },
+            Token::Keyword(key) => {
+                match key {
+                    Keyword::AttributeBegin | Keyword::TransformBegin => {
+                        state.save();
                     }
-                    let matrix = state.matrix()
-                        * Matrix4::from_translation(Vector3::new(values[0], values[1], values[2]));
-                    state.replace_matrix(matrix);
-                }
-                Rule::rotate => {
-                    let values = pbrt_matrix(inner_pair.into_inner());
-                    if values.len() != 4 {
-                        panic!("LookAt need to have 4 floats: {:?}", values);
+                    Keyword::AttributeEnd | Keyword::TransformEnd => {
+                        state.restore();
                     }
-                    let angle = values[0];
-                    let axis = Vector3::new(values[1], values[2], values[3]).normalize();
-                    let matrix = state.matrix() * Matrix4::from_axis_angle(axis, Deg(angle));
-                    state.replace_matrix(matrix);
+                    Keyword::Identity => {
+                        state.replace_matrix(Matrix4::from_diagonal(Vector4::new(
+                        1.0, 1.0, 1.0, 1.0,
+                    )));
+                    }
+                    Keyword::WorldBegin => {
+                         // Reinit the transformation matrix
+                        state.replace_matrix(Matrix4::identity());
+                    }
+                    Keyword::ObjectEnd => {
+                        let object = state.finish_object();
+                        scene_info
+                        .objects
+                        .insert(object.name.clone(), Rc::new(object));
+                    }
+                    Keyword::WorldEnd => {
+                        // Nothing?
+                    }
+                    Keyword::ReverseOrientation => {
+                        todo!();
+                    }
                 }
-                Rule::named_statement => {
-                    for rule_pair in inner_pair.into_inner() {
-                        match rule_pair.as_rule() {
-                            Rule::integrator | Rule::sampler | Rule::pixel_filter => {
-                                // Ignore these parameters
-                            }
-                            Rule::camera => {
-                                if let Some(c) = Camera::new(rule_pair, state.matrix()) {
-                                    scene_info.cameras.push(c);
+            },
+            Token::ActiveTransform(_) => {
+                todo!();
+            },
+            Token::MediumInterface { .. } => {
+                todo!()
+            },
+            Token::Texture {
+                name, class, mut values, .. // t not read
+            } => {
+                    // TODO: WK
+                    // Check type as Well... {spectrum or float} -> Two lists
+
+                    // TODO: A lot of parameters...
+                    match &class[..] {
+                        "imagemap" => {
+                            scene_info.textures.insert(name, Texture {
+                                filename: values.remove("filename").unwrap().into_string(),
+                                trilinear: remove_default!(values, "trilinear", Value::Boolean(false)).into_bool(),
+                            });
+                        }
+                        _ => warn!("texture type {} is ignored", class)
+                    }
+                },
+            Token::NamedToken(mut named_token) => {
+                // pub enum NamedTokenType {
+                //     MakeNamedMedium,
+                // }
+
+                // pub struct NamedToken {
+                //     pub internal_type: String,
+                //     pub values: HashMap<String, Value>,
+                //     pub object_type: NamedTokenType,
+                // }
+
+                match named_token.object_type {
+                    NamedTokenType::Accelerator | NamedTokenType::Integrator | NamedTokenType::Sampler | NamedTokenType::PixelFilter | NamedTokenType::SurfaceIntegrator | NamedTokenType::VolumeIntegrator => {
+                        // Nothing...
+                    },
+                    NamedTokenType::Camera => {
+                        if let Some(c) = Camera::new(named_token, state.matrix()) {
+                            scene_info.cameras.push(c);
+                        }
+                    },
+                    NamedTokenType::MakeNamedMaterial => {
+                        let name = named_token.internal_type.clone();
+                        if let Some(bsdf) = BSDF::new(named_token, false) {
+                            scene_info.materials.insert(name, bsdf);
+                        }
+                    }
+                    NamedTokenType::NamedMaterial => {
+                        assert!(named_token.values.is_empty());
+                        state.set_named_matrial(named_token.internal_type);
+                    }
+                    NamedTokenType::Material => {
+                        if let Some(bsdf) = BSDF::new(named_token, true) {
+                            // Create a fake name...
+                            let name = format!(
+                                "unamed_material_{}",
+                                scene_info.number_unamed_materials
+                            );
+                            scene_info.number_unamed_materials += 1;
+                            scene_info.materials.insert(name.to_string(), bsdf);
+                            state.set_named_matrial(name);
+                        }
+                    }
+                    NamedTokenType::Shape => {
+                        if let Some(shape) = Shape::new(named_token, working_dir) {
+                            let mut shape = ShapeInfo::new(shape, state.matrix());
+                            shape.material_name = state.named_material();
+                            shape.emission = state.emission();
+                            match &mut state.object {
+                                Some(o) => {
+                                    info!("Added inside an object: {}", o.name);
+                                    o.shapes.push(shape)
                                 }
-                            }
-                            Rule::texture => match working_dir {
                                 None => {
-                                    panic!("No working dir is provided, Texture are not supported")
+                                    info!("Put inside scene_info");
+                                    scene_info.shapes.push(shape)
                                 }
-                                Some(ref wk) => {
-                                    if let Some((name, mat)) = Texture::new(rule_pair, wk) {
-                                        scene_info.textures.insert(name, mat);
-                                    }
-                                }
-                            },
-                            Rule::make_named_material => {
-                                if let Some((name, mat)) = BSDF::new(rule_pair, false) {
-                                    scene_info.materials.insert(name, mat);
-                                }
-                            }
-                            Rule::named_material => {
-                                let (name, _) = parse_parameters(rule_pair);
-                                state.set_named_matrial(name);
-                            }
-                            Rule::material => {
-                                if let Some((_, mat)) = BSDF::new(rule_pair, true) {
-                                    let name = format!(
-                                        "unamed_material_{}",
-                                        scene_info.number_unamed_materials
-                                    );
-                                    scene_info.number_unamed_materials += 1;
-                                    scene_info.materials.insert(name.to_string(), mat);
-                                    state.set_named_matrial(name);
-                                }
-                            }
-                            Rule::shape => {
-                                if let Some((_name, shape)) = Shape::new(rule_pair, working_dir) {
-                                    let mut shape = ShapeInfo::new(shape, state.matrix());
-                                    shape.material_name = state.named_material();
-                                    shape.emission = state.emission();
-                                    match &mut state.object {
-                                        Some(o) => {
-                                            info!("Added inside an object: {}", o.name);
-                                            o.shapes.push(shape)
-                                        }
-                                        None => {
-                                            info!("Put inside scene_info");
-                                            scene_info.shapes.push(shape)
-                                        }
-                                    };
-                                }
-                            }
-                            Rule::film => {
-                                let (_name, mut param) = parse_parameters(rule_pair);
-                                scene_info.image_size = Vector2::new(
-                                    param.remove("xresolution").unwrap().into_integer()[0] as u32,
-                                    param.remove("yresolution").unwrap().into_integer()[0] as u32,
-                                );
-                            }
-                            Rule::area_light_source => {
-                                let (typename, mut light) = parse_parameters(rule_pair);
-                                match typename.as_ref() {
-                                    "diffuse" => {
-                                        if let Some(e) = light.remove("L") {
-                                            // TODO: If other name, not exported
-                                            state.set_emission(e);
-                                        }
-                                    }
-                                    _ => warn!("Unsuppored area light: {}", typename),
-                                }
-                            }
-                            Rule::light_source => {
-                                if let Some(light) = Light::new(rule_pair) {
-                                    scene_info.lights.push(light);
-                                }
-                            }
-                            Rule::coord_sys_transform => {
-                                let (name, _) = parse_parameters(rule_pair);
-                                state.replace_matrix(*scene_info.transforms.get(&name).unwrap());
-                            }
-                            Rule::coord_sys => {
-                                let (name, _) = parse_parameters(rule_pair);
-                                scene_info
-                                    .transforms
-                                    .insert(name, state.matrix.last().unwrap().clone());
-                            }
-                            Rule::include => {
-                                match working_dir {
-                                    None => panic!(
-                                        "No working dir is provided, Texture are not supported"
-                                    ),
-                                    Some(ref wk) => {
-                                        let (name, _) = parse_parameters(rule_pair);
-                                        info!("Include found: {}", name);
-                                        let filename = wk.join(name);
-                                        read_pbrt_file(
-                                            filename.to_str().unwrap(),
-                                            working_dir,
-                                            scene_info,
-                                            state,
-                                        );
-                                    }
-                                };
-                            }
-                            _ => warn!("Ignoring named statement: {:?}", rule_pair.as_rule()),
+                            };
                         }
                     }
-                }
-                Rule::keyword => {
-                    for rule_pair in inner_pair.into_inner() {
-                        match rule_pair.as_rule() {
-                            Rule::attribute_begin | Rule::transform_begin => {
-                                state.save();
+                    NamedTokenType::Film => {
+                        scene_info.image_size = Vector2::new(
+                            named_token.values.remove("xresolution").unwrap().into_integer()[0] as u32,
+                            named_token.values.remove("yresolution").unwrap().into_integer()[0] as u32,
+                        );
+                    }
+                    NamedTokenType::AreaLightSource => {
+                        match &named_token.internal_type[..] {
+                            "diffuse" => {
+                                if let Some(e) = named_token.values.remove("L") {
+                                    state.set_emission(e.into_spectrum());
+                                }
                             }
-                            Rule::object_begin => {
-                                // In san miguel, attribute begin and object begin are wrong...
-                                let (name, _) = parse_parameters(rule_pair);
-                                state.new_object(name);
-                            }
-                            Rule::object_end => {
-                                let object = state.finish_object();
-                                scene_info
-                                    .objects
-                                    .insert(object.name.clone(), Rc::new(object));
-                            }
-                            Rule::object_instance => {
-                                let (name, _) = parse_parameters(rule_pair);
-                                scene_info.instances.push(InstanceInfo {
-                                    matrix: state.matrix(),
-                                    name,
-                                })
-                            }
-                            Rule::attribute_end | Rule::transform_end => {
-                                state.restore();
-                            }
-                            Rule::identity => {
-                                state.replace_matrix(Matrix4::from_diagonal(Vector4::new(
-                                    1.0, 1.0, 1.0, 1.0,
-                                )));
-                            }
-                            Rule::world_begin => {
-                                // Reinit the transformation matrix
-                                state.replace_matrix(Matrix4::identity());
-                            }
-                            _ => warn!("Ignoring keyword: {:?}", rule_pair.as_rule()),
+                            _ => warn!("Unsuppored area light: {}", named_token.internal_type),
                         }
                     }
+                    NamedTokenType::LightSource => {
+                        if let Some(light) = Light::new(named_token) {
+                            scene_info.lights.push(light);
+                        }
+                    }
+                    NamedTokenType::CoordSysTransform => {
+                        state.replace_matrix(*scene_info.transforms.get(&named_token.internal_type).unwrap());
+                    }
+                    NamedTokenType::CoordSys => {
+                        scene_info
+                        .transforms
+                        .insert(named_token.internal_type, state.matrix.last().unwrap().clone());
+                    }
+                    NamedTokenType::Include => {
+                        let wk = working_dir.as_ref().unwrap();
+                        info!("Include found: {}", named_token.internal_type);
+                        let filename = wk.join(named_token.internal_type);
+                        read_pbrt_file(
+                            filename.to_str().unwrap(),
+                            working_dir,
+                            scene_info,
+                            state,
+                        );
+                    }
+                    NamedTokenType::ObjectBegin => {
+                        state.new_object(named_token.internal_type);
+                    }
+                    NamedTokenType::ObjectInstance => {
+                        scene_info.instances.push(
+                            InstanceInfo {
+                                matrix: state.matrix(),
+                                name: named_token.internal_type
+                            }
+                        )
+                    }
+                    _ => warn!("{:?} not implemented", named_token.object_type),
                 }
-                _ => warn!("Ignoring: {:?}", span.as_str()),
             }
         }
     }
-    // info!("Time for parsing file: {:?}", Instant::now() - now);
 }
 
 /**
@@ -1139,12 +906,10 @@ pub fn read_pbrt_file(
 ) {
     let now = Instant::now();
     info!("Loading: {}", path);
-    let file = std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
-    let mut reader = std::io::BufReader::new(file);
-    let mut str_buf_other: String = String::default();
-    let _num_bytes = reader.read_to_string(&mut str_buf_other);
-    info!("Time for reading file: {:?}", Instant::now() - now);
-    read_pbrt(&str_buf_other, working_dir, scene_info, state);
+    let mut file =
+        std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    read_pbrt(&contents, working_dir, scene_info, state);
+    info!("Time for parsing file: {:?}", Instant::now() - now);
 }
-
-pub mod ply;
