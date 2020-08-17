@@ -41,6 +41,35 @@ fn parse_string_sp<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &
     nom::bytes::complete::take_while1(move |c| c != ' ')(i)
 }
 
+#[derive(Debug, Clone)]
+pub struct Blackbody {
+    pub temperature: f32,
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RGB {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+impl RGB {
+    pub fn color(v: f32) -> RGB {
+        RGB { r: v, g: v, b: v }
+    }
+}
+
+/// PBRT spectrum type
+#[derive(Debug, Clone)]
+pub enum Spectrum {
+    RGB(RGB),
+    Blackbody(Blackbody),
+    Texture(String),
+    Spectrum(String),
+    Mapname(String),
+}
+
 // Contain the list of parameter type
 // some type are on the same one to avoid unecessary
 // repetition in the code below
@@ -51,7 +80,71 @@ pub enum Value {
     Vector3(Vec<Vector3<f32>>),
     Vector2(Vec<Vector2<f32>>),
     String(String),
+    Texture(String),
+    Spectrum(String),
+    RGB(RGB),
+    Blackbody(Blackbody),
     Boolean(bool),
+}
+impl Value {
+    pub fn into_integer(self) -> Vec<i32> {
+        match self {
+            Value::Integer(v) => v,
+            _ => panic!("into_integer failed: {:?}", self),
+        }
+    }
+
+    pub fn into_float(self) -> Vec<f32> {
+        match self {
+            Value::Float(v) => v,
+            _ => panic!("into_float failed: {:?}", self),
+        }
+    }
+
+    pub fn into_vector3(self) -> Vec<Vector3<f32>> {
+        match self {
+            Value::Vector3(v) => v,
+            _ => panic!("into_vector3 failed: {:?}", self),
+        }
+    }
+
+    pub fn into_vector2(self) -> Vec<Vector2<f32>> {
+        match self {
+            Value::Vector2(v) => v,
+            _ => panic!("into_vector2 failed: {:?}", self),
+        }
+    }
+
+    pub fn into_string(self) -> String {
+        match self {
+            Value::String(v) => v,
+            _ => panic!("into_string failed: {:?}", self),
+        }
+    }
+
+    pub fn into_bool(self) -> bool {
+        match self {
+            Value::Boolean(v) => v,
+            _ => panic!("into_bool failed: {:?}", self),
+        }
+    }
+
+    pub fn into_rgb(self) -> RGB {
+        match self {
+            Value::RGB(v) => v,
+            _ => panic!("into_rgb failed: {:?}", self),
+        }
+    }
+
+    pub fn into_spectrum(self) -> Spectrum {
+        match self {
+            Value::RGB(v) => Spectrum::RGB(v),
+            Value::Blackbody(v) => Spectrum::Blackbody(v),
+            Value::Texture(v) => Spectrum::Texture(v),
+            Value::Spectrum(v) => Spectrum::Spectrum(v),
+            _ => panic!("into_spectrum failed: {:?}", self),
+        }
+    }
 }
 
 pub fn parse_value_helper<'a, E: ParseError<&'a str>, O, F1, F2>(
@@ -137,7 +230,7 @@ pub fn parse_value<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (
                 .collect();
             (i, Value::Vector2(v))
         }
-        "float" | "rgb" | "blackbody" | "color" => {
+        "float" => {
             let (i, v) = preceded(
                 sp,
                 parse_value_helper(
@@ -147,6 +240,28 @@ pub fn parse_value<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (
             )(i)?;
             (i, Value::Float(v))
         }
+        "rgb" | "color" => {
+            let (i, (r, g, b)) = preceded(
+                sp,
+                delimited(
+                    preceded(char('['), sp),
+                    nom::sequence::tuple((float, preceded(sp, float), preceded(sp, float))),
+                    preceded(sp, char(']')),
+                ),
+            )(i)?;
+            (i, Value::RGB(RGB { r, g, b }))
+        }
+        "blackbody" => {
+            let (i, (temperature, scale)) = preceded(
+                sp,
+                delimited(
+                    preceded(char('['), sp),
+                    nom::sequence::tuple((float, preceded(sp, float))),
+                    preceded(sp, char(']')),
+                ),
+            )(i)?;
+            (i, Value::Blackbody(Blackbody { temperature, scale }))
+        }
         "string" | "texture" | "spectrum" => {
             let (i, v) = preceded(
                 sp,
@@ -155,7 +270,12 @@ pub fn parse_value<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (
                     delimited(char('"'), parse_string, char('"')),
                 ),
             )(i)?;
-            (i, Value::String(v.to_owned()))
+            match t {
+                "string" => (i, Value::String(v.to_owned())),
+                "texture" => (i, Value::Texture(v.to_owned())),
+                "spectrum" => (i, Value::Spectrum(v.to_owned())),
+                _ => panic!("Impossible to convert str to type"),
+            }
         }
         _ => panic!("{:?} not valid type", t),
     };
