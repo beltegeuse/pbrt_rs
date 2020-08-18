@@ -449,13 +449,7 @@ fn main() {
     // The parsing
     let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
-    let working_dir = std::path::Path::new(scene_path_str).parent().unwrap();
-    pbrt_rs::read_pbrt_file(
-        scene_path_str,
-        Some(&working_dir),
-        &mut scene_info,
-        &mut state,
-    );
+    pbrt_rs::read_pbrt_file(scene_path_str, &mut scene_info, &mut state);
 
     // Then do some transformation
     // if it is necessary

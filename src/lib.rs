@@ -304,7 +304,7 @@ pub enum Shape {
     },
 }
 impl Shape {
-    fn new(mut named_token: NamedToken, wk: Option<&std::path::Path>) -> Option<Self> {
+    fn new(mut named_token: NamedToken, wk: &std::path::Path) -> Option<Self> {
         match &named_token.internal_type[..] {
             "trianglemesh" => {
                 let points = named_token
@@ -346,10 +346,6 @@ impl Shape {
                 })
             }
             "plymesh" => {
-                let wk = match wk {
-                    None => panic!("Plymesh is not supported without wk specified"),
-                    Some(ref v) => v,
-                };
                 let filename = named_token
                     .values
                     .remove("filename")
@@ -606,7 +602,7 @@ impl Default for Scene {
 
 pub fn read_pbrt(
     scene_string: &str,
-    working_dir: Option<&std::path::Path>,
+    working_dir: &std::path::Path,
     scene_info: &mut Scene,
     state: &mut State,
 ) {
@@ -765,8 +761,9 @@ pub fn read_pbrt(
                     // TODO: A lot of parameters...
                     match &class[..] {
                         "imagemap" => {
+                            let filename = working_dir.join(values.remove("filename").unwrap().into_string()).to_str().unwrap().to_owned();
                             scene_info.textures.insert(name, Texture {
-                                filename: values.remove("filename").unwrap().into_string(),
+                                filename,
                                 trilinear: remove_default!(values, "trilinear", Value::Boolean(false)).into_bool(),
                             });
                         }
@@ -862,14 +859,13 @@ pub fn read_pbrt(
                         .insert(named_token.internal_type, state.matrix.last().unwrap().clone());
                     }
                     NamedTokenType::Include => {
-                        let wk = working_dir.as_ref().unwrap();
                         info!("Include found: {}", named_token.internal_type);
-                        let filename = wk.join(named_token.internal_type);
-                        read_pbrt_file(
+                        let filename = working_dir.join(named_token.internal_type);
+                        read_pbrt_file_wk(
                             filename.to_str().unwrap(),
-                            working_dir,
                             scene_info,
                             state,
+                            working_dir,
                         );
                     }
                     NamedTokenType::ObjectBegin => {
@@ -893,11 +889,23 @@ pub fn read_pbrt(
 /**
  * Main method to read a PBRT file
  */
-pub fn read_pbrt_file(
+pub fn read_pbrt_file(path: &str, scene_info: &mut Scene, state: &mut State) {
+    let now = Instant::now();
+    info!("Loading: {}", path);
+    let working_dir = std::path::Path::new(path).parent().unwrap();
+    let mut file =
+        std::fs::File::open(path).unwrap_or_else(|_| panic!("Impossible to open {}", path));
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    read_pbrt(&contents, working_dir, scene_info, state);
+    info!("Time for parsing file: {:?}", Instant::now() - now);
+}
+
+fn read_pbrt_file_wk(
     path: &str,
-    working_dir: Option<&std::path::Path>,
     scene_info: &mut Scene,
     state: &mut State,
+    working_dir: &std::path::Path,
 ) {
     let now = Instant::now();
     info!("Loading: {}", path);
