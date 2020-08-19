@@ -103,6 +103,14 @@ impl Camera {
     }
 }
 
+fn point_min(v1: &Point3<f32>, v2: &Point3<f32>) -> Point3<f32> {
+    Point3::new(v1.x.min(v2.x), v1.y.min(v2.y), v1.z.min(v2.z))
+}
+
+fn point_max(v1: &Point3<f32>, v2: &Point3<f32>) -> Point3<f32> {
+    Point3::new(v1.x.max(v2.x), v1.y.max(v2.y), v1.z.max(v2.z))
+}
+
 fn vec_min(v1: &Vector3<f32>, v2: &Vector3<f32>) -> Vector3<f32> {
     Vector3::new(v1.x.min(v2.x), v1.y.min(v2.y), v1.z.min(v2.z))
 }
@@ -129,15 +137,15 @@ fn vec_min_coords(v: Vector3<f32>) -> f32 {
 
 #[derive(Debug)]
 pub struct BoundingBox {
-    pub p_min: Vector3<f32>,
-    pub p_max: Vector3<f32>,
+    pub p_min: Point3<f32>,
+    pub p_max: Point3<f32>,
 }
 
 impl Default for BoundingBox {
     fn default() -> Self {
         Self {
-            p_min: Vector3::new(std::f32::MAX, std::f32::MAX, std::f32::MAX),
-            p_max: Vector3::new(std::f32::MIN, std::f32::MIN, std::f32::MIN),
+            p_min: Point3::new(std::f32::MAX, std::f32::MAX, std::f32::MAX),
+            p_max: Point3::new(std::f32::MIN, std::f32::MIN, std::f32::MIN),
         }
     }
 }
@@ -145,24 +153,24 @@ impl Default for BoundingBox {
 impl BoundingBox {
     pub fn union_aabb(&self, b: &BoundingBox) -> BoundingBox {
         BoundingBox {
-            p_min: vec_min(&self.p_min, &b.p_min),
-            p_max: vec_max(&self.p_max, &b.p_max),
+            p_min: point_min(&self.p_min, &b.p_min),
+            p_max: point_max(&self.p_max, &b.p_max),
         }
     }
 
-    pub fn union_vec(&self, v: &Vector3<f32>) -> BoundingBox {
+    pub fn union_vec(&self, v: &Point3<f32>) -> BoundingBox {
         BoundingBox {
-            p_min: vec_min(&self.p_min, v),
-            p_max: vec_max(&self.p_max, v),
+            p_min: point_min(&self.p_min, v),
+            p_max: point_max(&self.p_max, v),
         }
     }
 
     pub fn transform(&self, t: &Matrix4<f32>) -> BoundingBox {
-        let p_min = t.transform_vector(self.p_min);
-        let p_max = t.transform_vector(self.p_max);
+        let p_min = t.transform_point(self.p_min);
+        let p_max = t.transform_point(self.p_max);
         BoundingBox {
-            p_min: vec_min(&p_min, &p_max),
-            p_max: vec_max(&p_min, &p_max),
+            p_min: point_min(&p_min, &p_max),
+            p_max: point_max(&p_min, &p_max),
         }
     }
 
@@ -170,14 +178,14 @@ impl BoundingBox {
         self.p_max - self.p_min
     }
 
-    pub fn center(&self) -> Vector3<f32> {
-        self.size() * 0.5 + self.p_min
+    pub fn center(&self) -> Point3<f32> {
+        Point3::from_vec(self.size() * 0.5 + self.p_min.to_vec())
     }
 
     pub fn intersect(&self, p: &Point3<f32>, d: &Vector3<f32>, t_c: f32) -> Option<f32> {
         // TODO: direction inverse could be precomputed
-        let t_0 = vec_div(&(self.p_min - p.to_vec()), &d);
-        let t_1 = vec_div(&(self.p_max - p.to_vec()), &d);
+        let t_0 = vec_div(&(self.p_min - p), &d);
+        let t_1 = vec_div(&(self.p_max - p), &d);
         let t_min = vec_max_coords(vec_min(&t_0, &t_1));
         let t_max = vec_min_coords(vec_max(&t_0, &t_1));
         if t_min <= t_max {
@@ -195,20 +203,20 @@ impl BoundingBox {
 
 #[derive(Debug)]
 struct Triangle {
-    pub p0: Vector3<f32>,
-    pub p1: Vector3<f32>,
-    pub p2: Vector3<f32>,
+    pub p0: Point3<f32>,
+    pub p1: Point3<f32>,
+    pub p2: Point3<f32>,
 }
 
 trait Intersectable {
-    fn middle(&self) -> Vector3<f32>;
+    fn middle(&self) -> Point3<f32>;
     fn intersection(&self, p_c: &Point3<f32>, d_c: &Vector3<f32>, its: &mut Intersection) -> bool;
     fn update_aabb(&self, aabb: BoundingBox) -> BoundingBox;
 }
 
 impl Intersectable for Triangle {
-    fn middle(&self) -> Vector3<f32> {
-        (self.p0 + self.p1 + self.p2) / 3.0
+    fn middle(&self) -> Point3<f32> {
+        Point3::from_vec((self.p0.to_vec() + self.p1.to_vec() + self.p2.to_vec()) / 3.0)
     }
 
     fn update_aabb(&self, mut aabb: BoundingBox) -> BoundingBox {
@@ -232,8 +240,8 @@ impl Intersectable for Triangle {
         }
         let p = p_c + t * d_c;
         let det = e1.cross(e2).magnitude();
-        let u0 = e1.cross(p.to_vec() - self.p0);
-        let v0 = (p.to_vec() - self.p0).cross(e2);
+        let u0 = e1.cross(p - self.p0);
+        let v0 = (p - self.p0).cross(e2);
         if u0.dot(n_geo) < 0.0 || v0.dot(n_geo) < 0.0 {
             return false;
         }
@@ -276,32 +284,45 @@ enum BVHPrimitive {
     Triangles(BHVAccel<Triangle>),
     Instance {
         bvh: Arc<BHVAccel<Triangle>>,
-        mat: Matrix4<f32>,
+        to_world: Matrix4<f32>,
+        to_local: Matrix4<f32>,
     },
 }
 impl Intersectable for BVHPrimitive {
-    fn middle(&self) -> Vector3<f32> {
+    fn middle(&self) -> Point3<f32> {
         match self {
             BVHPrimitive::Triangles(v) => v.middle(),
-            BVHPrimitive::Instance { bvh, mat } => mat.transform_vector(bvh.middle()),
+            BVHPrimitive::Instance { bvh, to_world, .. } => to_world.transform_point(bvh.middle()),
         }
     }
     fn intersection(&self, p_c: &Point3<f32>, d_c: &Vector3<f32>, its: &mut Intersection) -> bool {
         match self {
             BVHPrimitive::Triangles(v) => v.intersection(p_c, d_c, its),
-            BVHPrimitive::Instance { bvh, mat } => {
-                let p = mat.transform_point(*p_c);
-                let d = mat.transform_vector(*d_c);
-                bvh.intersection(&p, &d, its)
+            BVHPrimitive::Instance {
+                bvh,
+                to_local,
+                to_world,
+            } => {
+                // Project ray to local space
+                let p = to_local.transform_point(*p_c);
+                let d = to_local.transform_vector(*d_c).normalize();
+                // Do the intersection
+                let intersected = bvh.intersection(&p, &d, its);
+                // If we intersected, we do the transformations back
+                if intersected {
+                    its.p = Some(to_world.transform_point(its.p.unwrap()));
+                    its.n_geo = Some(to_world.transform_vector(its.n_geo.unwrap()).normalize());
+                }
+                intersected
             }
         }
     }
     fn update_aabb(&self, aabb: BoundingBox) -> BoundingBox {
         match self {
             BVHPrimitive::Triangles(v) => v.update_aabb(aabb),
-            BVHPrimitive::Instance { bvh, mat } => {
+            BVHPrimitive::Instance { bvh, to_world, .. } => {
                 let id = bvh.root.unwrap();
-                bvh.nodes[id].aabb.transform(mat)
+                bvh.nodes[id].aabb.transform(to_world).union_aabb(&aabb)
             }
         }
     }
@@ -314,7 +335,7 @@ struct BHVAccel<T: Intersectable> {
 }
 
 impl<T: Intersectable> Intersectable for BHVAccel<T> {
-    fn middle(&self) -> Vector3<f32> {
+    fn middle(&self) -> Point3<f32> {
         let id = self.root.unwrap();
         self.nodes[id].aabb.center()
     }
@@ -434,8 +455,6 @@ impl<T: Intersectable> BHVAccel<T> {
     }
 
     pub fn create_from_scene(scene: &pbrt_rs::Scene) -> BHVAccel<BVHPrimitive> {
-        // TODO: No object ID is associated for now...
-
         // Create the list of triangles from all the scene object
         // Note that for now, it is a simple BVH...
         let mut primitives = Vec::new();
@@ -449,7 +468,7 @@ impl<T: Intersectable> BHVAccel<T> {
                     let mat = m.matrix;
                     let points = points
                         .iter()
-                        .map(|n| mat.transform_point(n.clone()).to_vec())
+                        .map(|n| mat.transform_point(n.clone()))
                         .collect::<Vec<_>>();
                     for i in indices {
                         triangles.push(Triangle {
@@ -480,58 +499,60 @@ impl<T: Intersectable> BHVAccel<T> {
         }
 
         // Construct the Dict of object
-        // let mut objects_bvh = std::collections::HashMap::new();
-        // for (k, o) in &scene.objects {
-        //     let mut triangles = Vec::new();
-        //     for m in &o.shapes {
-        //         let (points, indices) = match &m.data {
-        //             pbrt_rs::Shape::TriMesh {
-        //                 points, indices, ..
-        //             } => (points.clone(), indices.clone()), // FIXME
-        //             pbrt_rs::Shape::Ply { filename, .. } => {
-        //                 let ply = pbrt_rs::ply::read_ply(std::path::Path::new(filename));
-        //                 (ply.points, ply.indices)
-        //             }
-        //             _ => panic!("Convert to trimesh before"),
-        //         };
+        let mut objects_bvh = std::collections::HashMap::new();
+        for (k, o) in &scene.objects {
+            let mut triangles = Vec::new();
+            for m in &o.shapes {
+                let (points, indices) = match &m.data {
+                    pbrt_rs::Shape::TriMesh {
+                        points, indices, ..
+                    } => (points.clone(), indices.clone()), // FIXME
+                    pbrt_rs::Shape::Ply { filename, .. } => {
+                        let ply = pbrt_rs::ply::read_ply(std::path::Path::new(filename));
+                        (ply.points, ply.indices)
+                    }
+                    _ => panic!("Convert to trimesh before"),
+                };
 
-        //         let mat = o.matrix * m.matrix; // FIXME: Check the matrix of object!!!!
-        //         let points = points
-        //             .iter()
-        //             .map(|n| mat.transform_point(n.clone()).to_vec())
-        //             .collect::<Vec<_>>();
-        //         for i in indices {
-        //             triangles.push(Triangle {
-        //                 p0: points[i.x],
-        //                 p1: points[i.y],
-        //                 p2: points[i.z],
-        //             });
-        //         }
-        //     }
+                let mat = m.matrix;
+                let points = points
+                    .iter()
+                    .map(|n| mat.transform_point(n.clone()))
+                    .collect::<Vec<_>>();
+                for i in indices {
+                    triangles.push(Triangle {
+                        p0: points[i.x],
+                        p1: points[i.y],
+                        p2: points[i.z],
+                    });
+                }
+            }
 
-        //     let mut accel = BHVAccel {
-        //         primitives: triangles,
-        //         nodes: Vec::new(),
-        //         root: None,
-        //     };
-        //     accel.root = accel.build(0, accel.primitives.len(), 0);
-        //     info!("BVH stats: ");
-        //     info!(" - Number of triangles: {}", accel.primitives.len());
-        //     info!(" - Number of nodes: {}", accel.nodes.len());
-        //     info!(
-        //         " - AABB size root: {:?}",
-        //         accel.nodes[accel.root.unwrap()].aabb.size()
-        //     );
-        //     objects_bvh.insert(k, Arc::new(accel));
-        // }
+            let mut accel = BHVAccel {
+                primitives: triangles,
+                nodes: Vec::new(),
+                root: None,
+            };
+            accel.root = accel.build(0, accel.primitives.len(), 0);
+            info!("BVH stats: ");
+            info!(" - Number of primivtes: {}", accel.primitives.len());
+            info!(" - Number of nodes: {}", accel.nodes.len());
+            info!(
+                " - AABB size root: {:?}",
+                accel.nodes[accel.root.unwrap()].aabb.size()
+            );
+            objects_bvh.insert(k, Arc::new(accel));
+        }
 
-        // // Now build the instances
-        // for i in &scene.instances {
-        //     primitives.push(BVHPrimitive::Instance {
-        //         bvh: objects_bvh.get(&i.name).unwrap().clone(),
-        //         mat: i.matrix,
-        //     })
-        // }
+        // Now build the instances
+        info!("Create {} instances...", scene.instances.len());
+        for i in &scene.instances {
+            primitives.push(BVHPrimitive::Instance {
+                bvh: objects_bvh.get(&i.name).unwrap().clone(),
+                to_world: i.matrix,
+                to_local: i.matrix.inverse_transform().unwrap(),
+            })
+        }
 
         let mut accel = BHVAccel {
             primitives,
@@ -540,27 +561,12 @@ impl<T: Intersectable> BHVAccel<T> {
         };
         accel.root = accel.build(0, accel.primitives.len(), 0);
         info!("BVH stats: ");
-        info!(" - Number of triangles: {}", accel.primitives.len());
+        info!(" - Number of primitives: {}", accel.primitives.len());
         info!(" - Number of nodes: {}", accel.nodes.len());
         info!(
             " - AABB size root: {:?}",
             accel.nodes[accel.root.unwrap()].aabb.size()
         );
-
-        // TODO: Is it necessary?
-        // Check up the slides
-        // for n in &accel.nodes {
-        //     if n.is_leaf() {
-        //         let mut aabb = BoundingBox::default();
-        //         for i in n.first..(n.first + n.count) {
-        //             aabb = aabb.union_vec(&accel.primitives[i].p0);
-        //             aabb = aabb.union_vec(&accel.primitives[i].p1);
-        //             aabb = aabb.union_vec(&accel.primitives[i].p2);
-        //         }
-        //         debug_assert_eq!(aabb.p_max, n.aabb.p_max);
-        //         debug_assert_eq!(aabb.p_min, n.aabb.p_min);
-        //     }
-        // }
 
         accel
     }
@@ -594,9 +600,9 @@ fn intersection(scene: &pbrt_rs::Scene, p: Point3<f32>, d: Vector3<f32>) -> Inte
             } => {
                 // Do simple intesection
                 let mat = m.matrix;
-                let points: Vec<Vector3<f32>> = points
+                let points: Vec<Point3<f32>> = points
                     .iter()
-                    .map(|n| mat.transform_point(n.clone()).to_vec())
+                    .map(|n| mat.transform_point(n.clone()))
                     .collect();
                 for i in indices {
                     let t = Triangle {
