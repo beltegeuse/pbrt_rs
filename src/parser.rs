@@ -201,8 +201,14 @@ pub fn parse_value<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (
             let (i, v) = preceded(
                 sp,
                 parse_value_helper(
-                    delimited(char('"'), nom::character::complete::alpha1, char('"')),
-                    delimited(char('"'), nom::character::complete::alpha1, char('"')),
+                    nom::branch::alt((
+                        delimited(char('"'), nom::character::complete::alpha1, char('"')),
+                        nom::character::complete::alpha1,
+                    )),
+                    nom::branch::alt((
+                        delimited(char('"'), nom::character::complete::alpha1, char('"')),
+                        nom::character::complete::alpha1,
+                    )),
                 ),
             )(i)?;
 
@@ -272,7 +278,10 @@ pub fn parse_value<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (
                 sp,
                 delimited(
                     preceded(char('['), sp),
-                    nom::sequence::tuple((float, preceded(sp, float))),
+                    nom::branch::alt((
+                        nom::sequence::tuple((float, preceded(sp, float))),
+                        nom::combinator::map(float, |f| (f, 1.0)),
+                    )),
                     preceded(sp, char(']')),
                 ),
             )(i)?;

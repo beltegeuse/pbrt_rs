@@ -916,3 +916,22 @@ fn read_pbrt_file_wk(
     read_pbrt(&contents, working_dir, scene_info, state);
     info!("Time for parsing file: {:?}", Instant::now() - now);
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn zero_day_frame25() {
+        let f = "./data/zero-day/frame25.pbrt";
+        let mut scene_info = crate::Scene::default();
+        let mut state = crate::State::default();
+        crate::read_pbrt_file(f, &mut scene_info, &mut state);
+    }
+
+    #[test]
+    fn zero_day_frame52() {
+        let f = "./data/zero-day/frame52.pbrt";
+        let mut scene_info = crate::Scene::default();
+        let mut state = crate::State::default();
+        crate::read_pbrt_file(f, &mut scene_info, &mut state);
+    }
+}
