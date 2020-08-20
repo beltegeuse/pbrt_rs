@@ -478,6 +478,11 @@ impl<T: Intersectable> BHVAccel<T> {
                         });
                     }
 
+                    if triangles.is_empty() {
+                        warn!("Mesh is empty, ignoring it...");
+                        continue;
+                    }
+
                     let mut accel = BHVAccel {
                         primitives: triangles,
                         nodes: Vec::new(),
