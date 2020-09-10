@@ -51,7 +51,7 @@ impl Camera {
                     .values
                     .remove("fov")
                     .expect("fov is not given")
-                    .into_float()[0];
+                    .into_floats()[0];
                 Some(Camera::Perspective {
                     fov,
                     world_to_camera: mat,
@@ -302,6 +302,18 @@ pub enum Shape {
         alpha: Option<Texture>,
         shadowalpha: Option<Texture>,
     },
+    Sphere {
+        radius: f32, // 1.0
+        z_min: Option<f32>,
+        z_max: Option<f32>,
+        phi_max: f32, //< 360 (in degree)
+    },
+    Disk {
+        height: f32,       // 0.0
+        radius: f32,       // 1.0
+        inner_radius: f32, // 0.0
+        phi_max: f32,      // 360 (in degree)
+    },
 }
 impl Shape {
     fn new(mut named_token: NamedToken, wk: &std::path::Path) -> Option<Self> {
@@ -331,7 +343,7 @@ impl Shape {
                     None
                 };
                 let uv = if let Some(v) = named_token.values.remove("uv") {
-                    let v = v.into_float();
+                    let v = v.into_floats();
                     assert_eq!(v.len() % 2, 0);
                     let v = v.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
                     Some(v)
@@ -358,6 +370,42 @@ impl Shape {
                     shadowalpha: None, // FIXME
                 })
             }
+            "sphere" => {
+                let radius = remove_default!(named_token.values, "radius", Value::Float(vec![1.0]))
+                    .into_float();
+                let z_min = named_token.values.remove("zmin").map(|v| v.into_float());
+                let z_max = named_token.values.remove("zmax").map(|v| v.into_float());
+                let phi_max =
+                    remove_default!(named_token.values, "phimax", Value::Float(vec![360.0]))
+                        .into_float();
+
+                Some(Shape::Sphere {
+                    radius,
+                    z_min,
+                    z_max,
+                    phi_max,
+                })
+            }
+            "disk" => {
+                let radius = remove_default!(named_token.values, "radius", Value::Float(vec![1.0]))
+                    .into_float();
+                let phi_max =
+                    remove_default!(named_token.values, "phimax", Value::Float(vec![360.0]))
+                        .into_float();
+                let height = remove_default!(named_token.values, "height", Value::Float(vec![0.0]))
+                    .into_float();
+                let inner_radius =
+                    remove_default!(named_token.values, "innerradius", Value::Float(vec![0.0]))
+                        .into_float();
+
+                Some(Shape::Disk {
+                    radius,
+                    phi_max,
+                    height,
+                    inner_radius,
+                })
+            }
+
             _ => {
                 warn!("Shape case with {} is not cover", named_token.internal_type);
                 None

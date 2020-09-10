@@ -99,9 +99,19 @@ impl Value {
         }
     }
 
-    pub fn into_float(self) -> Vec<f32> {
+    pub fn into_floats(self) -> Vec<f32> {
         match self {
             Value::Float(v) => v,
+            _ => panic!("into_float failed: {:?}", self),
+        }
+    }
+
+    pub fn into_float(self) -> f32 {
+        match self {
+            Value::Float(v) => {
+                assert!(v.len() == 1);
+                v[0]
+            }
             _ => panic!("into_float failed: {:?}", self),
         }
     }
