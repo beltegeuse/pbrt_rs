@@ -520,6 +520,7 @@ pub struct State {
     matrix: Vec<Matrix4<f32>>,
     emission: Vec<Option<Spectrum>>,
     object: Option<ObjectInfo>,
+    reverse_orientation: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -528,6 +529,7 @@ impl Default for State {
             matrix: vec![Matrix4::identity()],
             emission: vec![None],
             object: None,
+            reverse_orientation: false,
         }
     }
 }
@@ -590,6 +592,7 @@ pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
     pub matrix: Matrix4<f32>,
+    pub reverse_orientation: bool,
     pub emission: Option<Spectrum>,
 }
 impl ShapeInfo {
@@ -598,6 +601,7 @@ impl ShapeInfo {
             data: shape,
             material_name: None,
             matrix,
+            reverse_orientation: false,
             emission: None,
         }
     }
@@ -790,7 +794,7 @@ pub fn read_pbrt(
                         // Nothing?
                     }
                     Keyword::ReverseOrientation => {
-                        todo!();
+                        state.reverse_orientation = !state.reverse_orientation;
                     }
                 }
             },
@@ -836,6 +840,9 @@ pub fn read_pbrt(
                     NamedTokenType::Camera => {
                         if let Some(c) = Camera::new(named_token, state.matrix()) {
                             scene_info.cameras.push(c);
+                            scene_info
+                                .transforms
+                                .insert("camera".to_string(), state.matrix.last().unwrap().clone());
                         }
                     },
                     NamedTokenType::MakeNamedMaterial => {
@@ -865,6 +872,7 @@ pub fn read_pbrt(
                             let mut shape = ShapeInfo::new(shape, state.matrix());
                             shape.material_name = state.named_material();
                             shape.emission = state.emission();
+                            shape.reverse_orientation = state.reverse_orientation;
                             match &mut state.object {
                                 Some(o) => {
                                     info!("Added inside an object: {}", o.name);
