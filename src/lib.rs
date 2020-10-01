@@ -435,7 +435,7 @@ pub enum Light {
     },
 }
 impl Light {
-    fn new(mut named_token: NamedToken) -> Option<Self> {
+    fn new(mut named_token: NamedToken, mat: Matrix4<f32>) -> Option<Self> {
         let scale = if let Some(scale) = named_token.values.remove("scale") {
             scale.into_rgb()
         } else {
@@ -475,6 +475,7 @@ impl Light {
                 )
                 .into_vector3()[0];
                 let from = Point3::from_vec(from);
+                let from = mat.transform_point(from);
                 Some(Light::Point {
                     intensity,
                     from,
@@ -499,6 +500,8 @@ impl Light {
                 .into_vector3()[0];
                 let from = Point3::from_vec(from);
                 let to = Point3::from_vec(to);
+                let from = mat.transform_point(from);
+                let to = mat.transform_point(to);
                 Some(Light::Distant {
                     luminance,
                     from,
@@ -842,7 +845,7 @@ pub fn read_pbrt(
                             scene_info.cameras.push(c);
                             scene_info
                                 .transforms
-                                .insert("camera".to_string(), state.matrix.last().unwrap().clone());
+                                .insert("camera".to_string(), state.matrix().inverse_transform().unwrap());
                         }
                     },
                     NamedTokenType::MakeNamedMaterial => {
@@ -902,7 +905,7 @@ pub fn read_pbrt(
                         }
                     }
                     NamedTokenType::LightSource => {
-                        if let Some(light) = Light::new(named_token) {
+                        if let Some(light) = Light::new(named_token, state.matrix()) {
                             scene_info.lights.push(light);
                         }
                     }
