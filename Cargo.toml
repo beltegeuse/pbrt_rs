@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 log = "0.4"
-cgmath = "0.17"
+cgmath = "0.18"
 ply-rs = "0.1.2"
 nom = { git = "https://github.com/Geal/nom.git", tag = "6.0.0-alpha1" }
 
