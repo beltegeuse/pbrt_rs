@@ -413,7 +413,6 @@ pub fn parse_named_token<'a, E: ParseError<&'a str>>(
     i: &'a str,
 ) -> IResult<&'a str, NamedToken, E> {
     let (i, object_type) = parse_named_token_type(i)?;
-
     let (i, internal_type) = nom::combinator::cut(preceded(
         sp,
         delimited(
@@ -511,7 +510,7 @@ pub fn concat_transform<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a s
 
     assert_eq!(v.len(), 16);
 
-    Ok((i, Token::Transform(v)))
+    Ok((i, Token::ConcatTransform(v)))
 }
 
 pub fn active_transform<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Token, E> {

@@ -993,4 +993,13 @@ mod tests {
         let mut state = crate::State::default();
         crate::read_pbrt_file(f, &mut scene_info, &mut state);
     }
+
+
+    #[test]
+    fn scene_path_test() {
+        let f = "./data/scene-path.pbrt";
+        let mut scene_info = crate::Scene::default();
+        let mut state = crate::State::default();
+        crate::read_pbrt_file(f, &mut scene_info, &mut state);
+    }
 }

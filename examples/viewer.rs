@@ -489,13 +489,15 @@ impl<T: Intersectable> BHVAccel<T> {
                         root: None,
                     };
                     accel.root = accel.build(0, accel.primitives.len(), 0);
-                    info!("BVH stats: ");
-                    info!(" - Number of triangles: {}", accel.primitives.len());
-                    info!(" - Number of nodes: {}", accel.nodes.len());
-                    info!(
-                        " - AABB size root: {:?}",
-                        accel.nodes[accel.root.unwrap()].aabb.size()
-                    );
+
+                    // For debugging
+                    // info!("BVH stats: ");
+                    // info!(" - Number of triangles: {}", accel.primitives.len());
+                    // info!(" - Number of nodes: {}", accel.nodes.len());
+                    // info!(
+                    //     " - AABB size root: {:?}",
+                    //     accel.nodes[accel.root.unwrap()].aabb.size()
+                    // );
 
                     primitives.push(BVHPrimitive::Triangles(accel));
                 }
@@ -513,7 +515,7 @@ impl<T: Intersectable> BHVAccel<T> {
                         points, indices, ..
                     } => (points.clone(), indices.clone()), // FIXME
                     pbrt_rs::Shape::Ply { filename, .. } => {
-                        let ply = pbrt_rs::ply::read_ply(std::path::Path::new(filename));
+                        let ply = pbrt_rs::ply::read_ply(std::path::Path::new(filename), false);
                         (ply.points, ply.indices)
                     }
                     _ => panic!("Convert to trimesh before"),
@@ -679,7 +681,7 @@ fn main() {
     for s in &mut scene_info.shapes {
         match &mut s.data {
             pbrt_rs::Shape::Ply { filename, .. } => {
-                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename)).to_trimesh();
+                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename), false).to_trimesh();
             }
             _ => (),
         }

@@ -104,8 +104,10 @@ impl PlyLoaded {
     }
 }
 
-pub fn read_ply(filename: &std::path::Path) -> PlyLoaded {
-    info!("Reading {:?} ...", filename);
+pub fn read_ply(filename: &std::path::Path, verbose: bool) -> PlyLoaded {
+    if verbose {
+        info!("Reading {:?} ...", filename);
+    }
     let f = match std::fs::File::open(filename.clone()) {
         Ok(f) => f,
         Err(e) => {
@@ -137,8 +139,10 @@ pub fn read_ply(filename: &std::path::Path) -> PlyLoaded {
             _ => panic!("Unexpeced element!"),
         }
     }
-    info!(" - #vertex: {}", vertex_list.len());
-    info!(" - #face: {}", face_list.len());
+    if verbose {
+        info!(" - #vertex: {}", vertex_list.len());
+        info!(" - #face: {}", face_list.len());
+    }
     let mut indices = Vec::new();
     for f in face_list {
         if f.vertex_index.len() == 3 {

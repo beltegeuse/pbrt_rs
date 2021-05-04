@@ -447,6 +447,7 @@ fn main() {
     }
 
     // The parsing
+    let now = std::time::Instant::now();
     let mut scene_info = pbrt_rs::Scene::default();
     let mut state = pbrt_rs::State::default();
     pbrt_rs::read_pbrt_file(scene_path_str, &mut scene_info, &mut state);
@@ -456,7 +457,7 @@ fn main() {
     for s in &mut scene_info.shapes {
         match &mut s.data {
             pbrt_rs::Shape::Ply { filename, .. } => {
-                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename)).to_trimesh();
+                s.data = pbrt_rs::ply::read_ply(std::path::Path::new(filename), false).to_trimesh();
             }
             _ => (),
         }
@@ -493,6 +494,8 @@ fn main() {
     // Camera information
     info!("Image size: {:?}", scene_info.image_size);
     print_camera_info(&scene_info);
+
+    info!("Parsing time: {:?}", std::time::Instant::now() - now);
 
     if let Some(obj_path) = matches.value_of("obj") {
         info!("Export in OBJ: {}", obj_path);
