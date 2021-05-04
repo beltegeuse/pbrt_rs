@@ -878,11 +878,11 @@ pub fn read_pbrt(
                             shape.reverse_orientation = state.reverse_orientation;
                             match &mut state.object {
                                 Some(o) => {
-                                    info!("Added inside an object: {}", o.name);
+                                    // info!("Added inside an object: {}", o.name);
                                     o.shapes.push(shape)
                                 }
                                 None => {
-                                    info!("Put inside scene_info");
+                                    // info!("Put inside scene_info");
                                     scene_info.shapes.push(shape)
                                 }
                             };
@@ -993,7 +993,6 @@ mod tests {
         let mut state = crate::State::default();
         crate::read_pbrt_file(f, &mut scene_info, &mut state);
     }
-
 
     #[test]
     fn scene_path_test() {
