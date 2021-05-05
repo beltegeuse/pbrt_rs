@@ -14,7 +14,6 @@ extern crate ply_rs;
 use cgmath::*;
 use std::collections::HashMap;
 use std::io::Read;
-use std::rc::Rc;
 use std::time::Instant;
 
 // Mods
@@ -69,7 +68,7 @@ impl Camera {
 }
 
 //// Texture representation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Texture {
     pub filename: String,
     pub trilinear: bool,
@@ -289,7 +288,7 @@ impl BSDF {
 }
 
 /// Mesh representation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Shape {
     TriMesh {
         indices: Vec<Vector3<usize>>,
@@ -590,7 +589,7 @@ impl State {
 }
 
 /// Scene representation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ShapeInfo {
     pub data: Shape,
     pub material_name: Option<String>,
@@ -630,10 +629,10 @@ pub struct Scene {
     pub materials: HashMap<String, BSDF>,
     pub textures: HashMap<String, Texture>,
     // 3D objects
-    pub shapes: Vec<ShapeInfo>,                   //< unamed shapes
-    pub objects: HashMap<String, Rc<ObjectInfo>>, //< shapes with objects
-    pub instances: Vec<InstanceInfo>,             //< instances on the shapes
-    pub lights: Vec<Light>,                       //< list of all light sources
+    pub shapes: Vec<ShapeInfo>,               //< unamed shapes
+    pub objects: HashMap<String, ObjectInfo>, //< shapes with objects
+    pub instances: Vec<InstanceInfo>,         //< instances on the shapes
+    pub lights: Vec<Light>,                   //< list of all light sources
     pub transforms: HashMap<String, Matrix4<f32>>,
 }
 impl Default for Scene {
@@ -791,7 +790,7 @@ pub fn read_pbrt(
                         let object = state.finish_object();
                         scene_info
                         .objects
-                        .insert(object.name.clone(), Rc::new(object));
+                        .insert(object.name.clone(), object);
                     }
                     Keyword::WorldEnd => {
                         // Nothing?
