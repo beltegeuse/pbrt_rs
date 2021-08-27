@@ -424,7 +424,7 @@ pub fn parse_named_token<'a, E: ParseError<&'a str>>(
 
     let (i, values) = nom::combinator::cut(nom::multi::fold_many0(
         preceded(sp, parse_value),
-        HashMap::new(),
+        HashMap::new,
         |mut acc: HashMap<String, Value>, item: (String, Value)| {
             acc.insert(item.0, item.1);
             acc
@@ -445,7 +445,7 @@ pub fn parse_named_token_many<'a, E: ParseError<&'a str>>(
 ) -> IResult<&'a str, Vec<NamedToken>, E> {
     nom::multi::fold_many1(
         preceded(sp, parse_named_token),
-        Vec::new(),
+        Vec::new,
         |mut acc: Vec<NamedToken>, item: NamedToken| {
             acc.push(item);
             acc
@@ -534,7 +534,7 @@ pub fn texture<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Token
     // Contains all the info
     let (i, values) = nom::combinator::cut(nom::multi::fold_many0(
         preceded(sp, parse_value),
-        HashMap::new(),
+        HashMap::new,
         |mut acc: HashMap<String, Value>, item: (String, Value)| {
             acc.insert(item.0, item.1);
             acc
@@ -653,7 +653,7 @@ pub fn parse<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Vec<Tok
         sp,
         nom::multi::fold_many0(
             preceded(sp, parse_token),
-            Vec::new(),
+            Vec::new,
             |mut acc: Vec<Token>, item: Token| {
                 acc.push(item);
                 acc
