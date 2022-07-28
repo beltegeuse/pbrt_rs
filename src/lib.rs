@@ -40,10 +40,11 @@ pub enum Camera {
     Perspective {
         fov: f32,
         world_to_camera: Matrix4<f32>,
+        medium: String,
     },
 }
 impl Camera {
-    fn new(mut named_token: NamedToken, mat: Matrix4<f32>) -> Option<Self> {
+    fn new(mut named_token: NamedToken, mat: Matrix4<f32>, medium: String) -> Option<Self> {
         match &named_token.internal_type[..] {
             "perspective" => {
                 let fov = named_token
@@ -54,6 +55,7 @@ impl Camera {
                 Some(Camera::Perspective {
                     fov,
                     world_to_camera: mat,
+                    medium,
                 })
             }
             _ => {
@@ -413,6 +415,125 @@ impl Shape {
     }
 }
 
+/// Volumes
+#[derive(Debug)]
+pub enum Medium {
+    Homogenous {
+        g: f32,            // 0
+        le: Spectrum,      // 0
+        lescale: f32,      // 1
+        preset: String,    // none
+        sigma_a: Spectrum, // 1
+        sigma_s: Spectrum, // 1
+        scale: f32,        // 1
+    },
+    NanoVDB {
+        g: f32,                 // 0
+        lescale: f32,           // 1
+        sigma_a: Spectrum,      // 1
+        sigma_s: Spectrum,      // 1
+        scale: f32,             // 1
+        filename: String,       // ""
+        temperatureoffset: f32, // 0
+        temperaturescale: f32,  // 1
+    },
+    // TODO:
+    // grid
+    // rgbgrid
+    // cloud
+}
+impl Medium {
+    fn new(mut named_token: NamedToken) -> Option<Self> {
+        let g = remove_default!(named_token.values, "g", Value::Float(vec![0.0])).into_float();
+        let medium_type = named_token
+            .values
+            .remove("type")
+            .expect("medium type param is required")
+            .into_string();
+        match &medium_type[..] {
+            "homogenous" => {
+                let le = remove_default!(named_token.values, "Le", Value::RGB(RGB::color(0.0)))
+                    .into_spectrum();
+                let lescale =
+                    remove_default!(named_token.values, "Lescale", Value::Float(vec![1.0]))
+                        .into_float();
+                let preset = remove_default!(
+                    named_token.values,
+                    "preset",
+                    Value::String("none".to_string())
+                )
+                .into_string();
+                let sigma_a =
+                    remove_default!(named_token.values, "sigma_a", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let sigma_s =
+                    remove_default!(named_token.values, "sigma_s", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let scale = remove_default!(named_token.values, "scale", Value::Float(vec![1.0]))
+                    .into_float();
+                Some(Self::Homogenous {
+                    g,
+                    le,
+                    lescale,
+                    preset,
+                    sigma_a,
+                    sigma_s,
+                    scale,
+                })
+            }
+            "nanovdb" => {
+                let lescale =
+                    remove_default!(named_token.values, "Lescale", Value::Float(vec![1.0]))
+                        .into_float();
+                let sigma_a =
+                    remove_default!(named_token.values, "sigma_a", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let sigma_s =
+                    remove_default!(named_token.values, "sigma_s", Value::RGB(RGB::color(1.0)))
+                        .into_spectrum();
+                let scale = remove_default!(named_token.values, "scale", Value::Float(vec![1.0]))
+                    .into_float();
+                let filename = remove_default!(
+                    named_token.values,
+                    "filename",
+                    Value::String("".to_string())
+                )
+                .into_string();
+                let temperatureoffset = remove_default!(
+                    named_token.values,
+                    "temperatureoffset",
+                    Value::Float(vec![0.0])
+                )
+                .into_float();
+                let temperaturescale = remove_default!(
+                    named_token.values,
+                    "temperaturescale",
+                    Value::Float(vec![1.0])
+                )
+                .into_float();
+
+                Some(Self::NanoVDB {
+                    g,
+                    lescale,
+                    sigma_a,
+                    sigma_s,
+                    scale,
+                    filename,
+                    temperatureoffset,
+                    temperaturescale,
+                })
+            }
+            _ => {
+                warn!(
+                    "Medium case with {} is not cover for {}",
+                    medium_type, named_token.internal_type
+                );
+                None
+            }
+        }
+    }
+}
+
 /// Lights
 #[derive(Debug)]
 pub enum Light {
@@ -522,6 +643,7 @@ pub struct State {
     matrix: Vec<Matrix4<f32>>,
     emission: Vec<Option<Spectrum>>,
     object: Option<ObjectInfo>,
+    medium_interface: Vec<(String, String)>,
     reverse_orientation: bool,
 }
 impl Default for State {
@@ -531,6 +653,7 @@ impl Default for State {
             matrix: vec![Matrix4::identity()],
             emission: vec![None],
             object: None,
+            medium_interface: vec![("".to_string(), "".to_string())],
             reverse_orientation: false,
         }
     }
@@ -544,6 +667,8 @@ impl State {
         self.matrix.push(new_matrix);
         let new_emission = self.emission.last().unwrap().clone();
         self.emission.push(new_emission);
+        let new_medium_interface = self.medium_interface.last().unwrap().clone();
+        self.medium_interface.push(new_medium_interface);
     }
     fn restore(&mut self) {
         self.named_material.pop();
@@ -586,6 +711,14 @@ impl State {
     fn finish_object(&mut self) -> ObjectInfo {
         std::mem::replace(&mut self.object, None).unwrap()
     }
+    // Medium
+    fn medium_interface(&self) -> (String, String) {
+        self.medium_interface.last().unwrap().clone()
+    }
+    fn set_medium_interface(&mut self, e: (String, String)) {
+        let last_id = self.medium_interface.len() - 1;
+        self.medium_interface[last_id] = e;
+    }
 }
 
 /// Scene representation
@@ -596,15 +729,17 @@ pub struct ShapeInfo {
     pub matrix: Matrix4<f32>,
     pub reverse_orientation: bool,
     pub emission: Option<Spectrum>,
+    pub medium: (String, String),
 }
 impl ShapeInfo {
-    fn new(shape: Shape, matrix: Matrix4<f32>) -> Self {
+    fn new(shape: Shape, matrix: Matrix4<f32>, medium: (String, String)) -> Self {
         Self {
             data: shape,
             material_name: None,
             matrix,
             reverse_orientation: false,
             emission: None,
+            medium,
         }
     }
 }
@@ -633,6 +768,7 @@ pub struct Scene {
     pub objects: HashMap<String, ObjectInfo>, //< shapes with objects
     pub instances: Vec<InstanceInfo>,         //< instances on the shapes
     pub lights: Vec<Light>,                   //< list of all light sources
+    pub medium: HashMap<String, Medium>,      //< named medium
     pub transforms: HashMap<String, Matrix4<f32>>,
 }
 impl Default for Scene {
@@ -649,6 +785,7 @@ impl Default for Scene {
             objects: HashMap::default(),
             instances: Vec::default(),
             lights: Vec::default(),
+            medium: HashMap::default(),
             transforms: HashMap::default(),
         }
     }
@@ -803,8 +940,8 @@ pub fn read_pbrt(
             Token::ActiveTransform(_) => {
                 todo!();
             },
-            Token::MediumInterface { .. } => {
-                todo!()
+            Token::MediumInterface { inside, outside } => {
+                state.set_medium_interface((inside, outside))
             },
             Token::Texture {
                 name, class, mut values, .. // t not read
@@ -837,10 +974,11 @@ pub fn read_pbrt(
 
                 match named_token.object_type {
                     NamedTokenType::Accelerator | NamedTokenType::Integrator | NamedTokenType::Sampler | NamedTokenType::PixelFilter | NamedTokenType::SurfaceIntegrator | NamedTokenType::VolumeIntegrator => {
-                        // Nothing...
+                        // We just ignore for now these parameters
+                        // as there will change widely between rendering engine
                     },
                     NamedTokenType::Camera => {
-                        if let Some(c) = Camera::new(named_token, state.matrix()) {
+                        if let Some(c) = Camera::new(named_token, state.matrix(), state.medium_interface().1) {
                             scene_info.cameras.push(c);
                             scene_info
                                 .transforms
@@ -871,7 +1009,7 @@ pub fn read_pbrt(
                     }
                     NamedTokenType::Shape => {
                         if let Some(shape) = Shape::new(named_token, working_dir) {
-                            let mut shape = ShapeInfo::new(shape, state.matrix());
+                            let mut shape = ShapeInfo::new(shape, state.matrix(), state.medium_interface());
                             shape.material_name = state.named_material();
                             shape.emission = state.emission();
                             shape.reverse_orientation = state.reverse_orientation;
@@ -937,7 +1075,12 @@ pub fn read_pbrt(
                             }
                         )
                     }
-                    _ => warn!("{:?} not implemented", named_token.object_type),
+                    NamedTokenType::MakeNamedMedium => {
+                        let name = named_token.internal_type.clone();
+                        if let Some(medium) = Medium::new(named_token) {
+                            scene_info.medium.insert(name, medium);
+                        }
+                    }
                 }
             }
         }
