@@ -324,7 +324,7 @@ impl Shape {
                     .values
                     .remove("P")
                     .expect(&format!("P is required {:?}", named_token))
-                    .into_vector3();
+                    .into_vectors3();
                 let points = points.into_iter().map(|v| Point3::from_vec(v)).collect();
                 let indices = named_token
                     .values
@@ -339,7 +339,7 @@ impl Shape {
                     .map(|v| Vector3::new(v[0] as usize, v[1] as usize, v[2] as usize))
                     .collect();
                 let normals = if let Some(v) = named_token.values.remove("N") {
-                    Some(v.into_vector3())
+                    Some(v.into_vectors3())
                 } else {
                     None
                 };
@@ -437,10 +437,23 @@ pub enum Medium {
         temperatureoffset: f32, // 0
         temperaturescale: f32,  // 1
     },
-    // TODO:
-    // grid
-    // rgbgrid
-    // cloud
+    Grid {
+        density: Vec<f32>,
+        g: f32,       // 0
+        le: Spectrum, // 0
+        lescale: f32, // 1
+        p0: Point3<f32>,
+        p1: Point3<f32>,
+        nx: u32,
+        ny: u32,
+        nz: u32,
+        preset: String,    // none
+        sigma_a: Spectrum, // 1
+        sigma_s: Spectrum, // 1
+        temperature: Vec<f32>,
+    }, // TODO:
+       // rgbgrid
+       // cloud
 }
 impl Medium {
     fn new(mut named_token: NamedToken) -> Option<Self> {
@@ -593,7 +606,7 @@ impl Light {
                     "from",
                     Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
                 )
-                .into_vector3()[0];
+                .into_vector3();
                 let from = Point3::from_vec(from);
                 let from = mat.transform_point(from);
                 Some(Light::Point {
@@ -611,13 +624,13 @@ impl Light {
                     "from",
                     Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
                 )
-                .into_vector3()[0];
+                .into_vector3();
                 let to = remove_default!(
                     named_token.values,
                     "to",
                     Value::Vector3(vec![Vector3::new(0.0, 0.0, 0.0)])
                 )
-                .into_vector3()[0];
+                .into_vector3();
                 let from = Point3::from_vec(from);
                 let to = Point3::from_vec(to);
                 let from = mat.transform_point(from);

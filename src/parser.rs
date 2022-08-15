@@ -116,14 +116,34 @@ impl Value {
         }
     }
 
-    pub fn into_vector3(self) -> Vec<Vector3<f32>> {
+    pub fn into_vector3(self) -> Vector3<f32> {
+        match self {
+            Value::Vector3(v) => {
+                assert!(v.len() == 1);
+                v[0]
+            }
+            _ => panic!("into_vector3 failed: {:?}", self),
+        }
+    }
+
+    pub fn into_vector2(self) -> Vector2<f32> {
+        match self {
+            Value::Vector2(v) => {
+                assert!(v.len() == 1);
+                v[0]
+            }
+            _ => panic!("into_vector2 failed: {:?}", self),
+        }
+    }
+
+    pub fn into_vectors3(self) -> Vec<Vector3<f32>> {
         match self {
             Value::Vector3(v) => v,
             _ => panic!("into_vector3 failed: {:?}", self),
         }
     }
 
-    pub fn into_vector2(self) -> Vec<Vector2<f32>> {
+    pub fn into_vectors2(self) -> Vec<Vector2<f32>> {
         match self {
             Value::Vector2(v) => v,
             _ => panic!("into_vector2 failed: {:?}", self),
