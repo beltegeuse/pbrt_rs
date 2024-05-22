@@ -344,9 +344,7 @@ impl Shape {
                     None
                 };
                 let uv = if let Some(v) = named_token.values.remove("uv") {
-                    let v = v.into_floats();
-                    assert_eq!(v.len() % 2, 0);
-                    let v = v.chunks(2).map(|v| Vector2::new(v[0], v[1])).collect();
+                    let v = v.into_vectors2();
                     Some(v)
                 } else {
                     None

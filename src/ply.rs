@@ -108,7 +108,7 @@ pub fn read_ply(filename: &std::path::Path, verbose: bool) -> PlyLoaded {
     if verbose {
         info!("Reading {:?} ...", filename);
     }
-    let f = match std::fs::File::open(filename.clone()) {
+    let f = match std::fs::File::open(filename) {
         Ok(f) => f,
         Err(e) => {
             panic!("Error in opening: {:?} => {:?}", filename, e);
